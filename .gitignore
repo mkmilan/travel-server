@@ -1,0 +1,4 @@
+# .gitignore (in server directory)
+
+node_modules
+.env
