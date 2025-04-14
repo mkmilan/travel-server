@@ -3,10 +3,10 @@ const gpxParse = require("gpx-parse");
 const turf = require("@turf/turf"); // For distance calculation and potentially simplification
 const Trip = require("../models/Trip");
 const User = require("../models/User");
-const storageService = require("../services/storageService"); // Import our storage service
+const storageService = require("../services/storageService");
 const mongoose = require("mongoose");
-// const User = require('../models/User'); // If needed for user details
-
+const fs = require("fs");
+const path = require("path");
 /**
  * @desc    Create a new trip
  * @route   POST /api/trips
@@ -202,14 +202,25 @@ const getTripById = async (req, res, next) => {
 		// Exclude the full GPX reference unless specifically needed here
 		const trip = await Trip.findById(tripId)
 			.select("-gpxFileRef") // Usually don't send GPX ref in main details
-			.populate("user", "username profilePictureUrl"); // Get user's public info
-		// .populate('comments.user', 'username profilePictureUrl') // Populate comment users later
+			.populate("user", "username profilePictureUrl")
+			.lean();
+
 		if (!trip) {
 			res.status(404);
 			return next(new Error(`Trip not found with ID: ${tripId}`));
 		}
+		// Optional: Populate photos if needed (or just send IDs for frontend to fetch)
+		const photoUrls = trip.photos.map((photoId) => `/api/photos/${photoId}`); // Example URL structure
 
-		res.status(200).json(trip);
+		// Create response object, replacing IDs with URLs if desired by frontend
+		const responseData = {
+			...trip,
+			// photos: photoUrls, // Option 1: Send URLs
+			photos: trip.photos, // Option 2: Send IDs (frontend builds URL) - Let's use this for now
+		};
+
+		// res.status(200).json(trip);
+		res.status(200).json(responseData);
 	} catch (error) {
 		console.error(`Error fetching trip ${tripId}:`, error);
 		next(error);
@@ -750,6 +761,182 @@ const getTripComments = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Upload photos for a specific trip
+ * @route   POST /api/trips/:tripId/photos
+ * @access  Private (Owner Only)
+ */
+const uploadTripPhotos = async (req, res, next) => {
+	const { tripId } = req.params;
+	const userId = req.user._id;
+
+	// Validate ObjectId format
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		res.status(400);
+		return next(new Error(`Invalid Trip ID format: ${tripId}`));
+	}
+
+	// Check if files were uploaded by multer
+	if (!req.files || req.files.length === 0) {
+		res.status(400);
+		return next(new Error("No photo files were uploaded."));
+	}
+
+	console.log(`Received ${req.files.length} files for trip ${tripId}`);
+
+	try {
+		// Find the trip to check ownership
+		const trip = await Trip.findById(tripId).select("_id user photos"); // Select only necessary fields
+		if (!trip) {
+			res.status(404);
+			// Clean up uploaded files if trip not found
+			req.files.forEach((file) => fs.unlinkSync(file.path));
+			return next(new Error(`Trip not found with ID: ${tripId}`));
+		}
+
+		// Authorization Check
+		if (trip.user.toString() !== userId.toString()) {
+			res.status(403);
+			// Clean up uploaded files if not authorized
+			req.files.forEach((file) => fs.unlinkSync(file.path));
+			return next(
+				new Error("User not authorized to upload photos to this trip")
+			);
+		}
+
+		// Process and upload each file
+		const uploadPromises = req.files.map(async (file) => {
+			console.log(`Processing file: ${file.filename}, Path: ${file.path}`);
+			// TODO: Implement image resizing/optimization here using sharp if desired BEFORE upload
+			// Example: const processedBuffer = await sharp(file.path).resize(1024).toBuffer();
+
+			// Read the file content (currently from temp disk storage)
+			const fileContent = fs.readFileSync(file.path);
+
+			// Define filename for storage (use original name or generated one)
+			const storageFilename = `trip_${tripId}_${file.originalname}`; // Example filename
+			const metadata = {
+				userId: userId.toString(),
+				tripId: tripId,
+				originalFilename: file.originalname,
+				mimetype: file.mimetype,
+				size: file.size,
+			};
+
+			// Upload to GridFS using storageService
+			console.log(`Uploading ${storageFilename} to GridFS...`);
+			const fileId = await storageService.uploadFile(
+				fileContent,
+				storageFilename,
+				metadata
+			);
+			console.log(`Uploaded ${storageFilename} with ID: ${fileId}`);
+
+			// --- IMPORTANT: Clean up temporary file ---
+			fs.unlinkSync(file.path); // Delete file from /uploads folder
+			console.log(`Deleted temporary file: ${file.path}`);
+			// --- End Cleanup ---
+
+			return fileId; // Return the stored file ID
+		});
+
+		// Wait for all uploads to complete
+		const uploadedFileIds = await Promise.all(uploadPromises);
+		console.log("All photos processed and uploaded:", uploadedFileIds);
+
+		// Add the new photo file IDs to the trip's photos array
+		trip.photos.push(...uploadedFileIds);
+		await trip.save(); // Save the updated trip document
+
+		res.status(200).json({
+			message: `${uploadedFileIds.length} photos uploaded successfully.`,
+			photoIds: uploadedFileIds, // Return the IDs of the uploaded photos
+		});
+	} catch (error) {
+		console.error(`Error uploading photos for trip ${tripId}:`, error);
+		// Attempt to clean up any files left in the uploads folder from this request
+		if (req.files && req.files.length > 0) {
+			req.files.forEach((file) => {
+				if (fs.existsSync(file.path)) {
+					fs.unlinkSync(file.path);
+					console.log(`Cleaned up errored file: ${file.path}`);
+				}
+			});
+		}
+		next(error);
+	}
+};
+
+/**
+ * @desc    Delete a specific photo associated with a trip
+ * @route   DELETE /api/trips/:tripId/photos/:photoId
+ * @access  Private (Owner Only)
+ */
+const deleteTripPhoto = async (req, res, next) => {
+	const { tripId, photoId } = req.params;
+	const userId = req.user._id;
+
+	// Validate IDs
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		res.status(400);
+		return next(new Error(`Invalid Trip ID: ${tripId}`));
+	}
+	if (!mongoose.Types.ObjectId.isValid(photoId)) {
+		res.status(400);
+		return next(new Error(`Invalid Photo ID: ${photoId}`));
+	}
+
+	try {
+		// Find the trip and verify ownership in one query
+		const trip = await Trip.findOne({
+			_id: tripId,
+			user: userId,
+		}).select("photos");
+
+		if (!trip) {
+			res.status(404);
+			return next(new Error("Trip not found or user not authorized"));
+		}
+
+		// Remove the photo ID from the trip's photos array
+		const photoIdString = photoId.toString();
+		const photoExists = trip.photos.includes(photoIdString);
+
+		if (!photoExists) {
+			res.status(404);
+			return next(new Error(`Photo ${photoId} not found in trip`));
+		}
+
+		// Try to delete the file from GridFS first
+		try {
+			await storageService.deleteFile(photoIdString);
+			console.log(`Successfully deleted photo file ${photoId} from storage`);
+		} catch (storageError) {
+			console.error(
+				`Failed to delete photo file ${photoId} from storage:`,
+				storageError
+			);
+			// If the file doesn't exist in storage, we still want to remove the reference
+			if (!storageError.message.includes("not found")) {
+				throw storageError; // Re-throw if it's not a "not found" error
+			}
+		}
+
+		// Remove the photo reference from the trip
+		trip.photos = trip.photos.filter((id) => id.toString() !== photoIdString);
+		await trip.save();
+		console.log(`Removed photo reference ${photoId} from trip ${tripId}`);
+
+		res.status(200).json({
+			message: "Photo deleted successfully",
+			photoId: photoId,
+		});
+	} catch (error) {
+		console.error(`Error in deleteTripPhoto for ${tripId}/${photoId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	createTrip,
 	getTripById,
@@ -762,4 +949,6 @@ module.exports = {
 	unlikeTrip,
 	addCommentToTrip,
 	getTripComments,
+	uploadTripPhotos,
+	deleteTripPhoto,
 };

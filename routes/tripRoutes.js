@@ -1,6 +1,7 @@
 // server/routes/tripRoutes.js
 const express = require("express");
 // Import deleteTrip
+const { uploadMultiplePhotos } = require("../config/multerConfig");
 const {
 	createTrip,
 	getTripById,
@@ -13,6 +14,8 @@ const {
 	unlikeTrip,
 	addCommentToTrip,
 	getTripComments,
+	uploadTripPhotos,
+	deleteTripPhoto,
 } = require("../controllers/tripController");
 const { protect } = require("../middleware/authMiddleware");
 
@@ -27,6 +30,9 @@ router.get("/feed", protect, getFeedTrips);
 router.get("/:tripId/gpx", getTripGpx);
 router.put("/:tripId", protect, updateTrip);
 router.delete("/:tripId", protect, deleteTrip);
+
+router.post("/:tripId/photos", protect, uploadMultiplePhotos, uploadTripPhotos);
+router.delete("/:tripId/photos/:photoId", protect, deleteTripPhoto);
 
 router.post("/:tripId/comments", protect, addCommentToTrip);
 router.get("/:tripId/comments", getTripComments);
