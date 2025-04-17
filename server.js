@@ -18,12 +18,21 @@ require("./services/storageService"); // Ensure path is correct
 
 // --- Create Express App ---
 const app = express();
+const isProduction = process.env.NODE_ENV === "production";
+const allowedOrigin = isProduction
+	? process.env.FRONTEND_URL // Use FRONTEND_URL from Render env vars in production
+	: "http://localhost:3000"; // Default to localhost for development
+
+console.log(
+	`CORS Allowed Origin: ${allowedOrigin} (NODE_ENV: ${process.env.NODE_ENV})`
+);
+console.log("isProduction", isProduction);
 
 // --- Core Middleware ---
 // Enable CORS - Configure origins as needed for production
 app.use(
 	cors({
-		origin: process.env.FRONTEND_URL || "http://localhost:3000", // Use env variable or default
+		origin: allowedOrigin,
 		credentials: true, // Allow cookies/auth headers if needed
 	})
 );
@@ -46,20 +55,12 @@ app.use("/api/trips", require("./routes/tripRoutes"));
 app.use("/api/photos", require("./routes/photoRoutes"));
 
 // --- Custom Error Handling Middleware ---
-// Place this *after* all route definitions
-// Example basic error handler (can be moved to middleware file)
 const errorHandler = (err, req, res, next) => {
-	// Log the error stack trace for debugging (consider more sophisticated logging in production)
 	console.error("Global Error Handler Caught:", err.stack);
-
-	// Determine status code - use error's status code if set, otherwise default to 500
-	const statusCode =
-		err.statusCode || (res.statusCode === 200 ? 500 : res.statusCode) || 500;
-
+	const statusCode = err.statusCode || 500;
 	res.status(statusCode).json({
 		message: err.message || "Internal Server Error",
-		// Optionally include stack trace only in development environment
-		stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
+		stack: isProduction ? undefined : err.stack, // Show stack only in dev
 	});
 };
 app.use(errorHandler);
