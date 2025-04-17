@@ -7,6 +7,7 @@ const storageService = require("../services/storageService");
 const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
+const sharp = require("sharp");
 /**
  * @desc    Create a new trip
  * @route   POST /api/trips
@@ -776,29 +777,31 @@ const uploadTripPhotos = async (req, res, next) => {
 		return next(new Error(`Invalid Trip ID format: ${tripId}`));
 	}
 
-	// Check if files were uploaded by multer
+	// Check if files were uploaded by multer (now in memory)
 	if (!req.files || req.files.length === 0) {
 		res.status(400);
 		return next(new Error("No photo files were uploaded."));
 	}
 
-	console.log(`Received ${req.files.length} files for trip ${tripId}`);
+	console.log(
+		`Received ${req.files.length} files in memory for trip ${tripId}`
+	);
+
+	let trip; // Define trip outside the try block for potential cleanup
 
 	try {
 		// Find the trip to check ownership
-		const trip = await Trip.findById(tripId).select("_id user photos"); // Select only necessary fields
+		trip = await Trip.findById(tripId).select("_id user photos"); // Select only necessary fields
 		if (!trip) {
 			res.status(404);
-			// Clean up uploaded files if trip not found
-			req.files.forEach((file) => fs.unlinkSync(file.path));
+			// No temp files to clean up with memoryStorage
 			return next(new Error(`Trip not found with ID: ${tripId}`));
 		}
 
 		// Authorization Check
 		if (trip.user.toString() !== userId.toString()) {
 			res.status(403);
-			// Clean up uploaded files if not authorized
-			req.files.forEach((file) => fs.unlinkSync(file.path));
+			// No temp files to clean up with memoryStorage
 			return next(
 				new Error("User not authorized to upload photos to this trip")
 			);
@@ -806,36 +809,79 @@ const uploadTripPhotos = async (req, res, next) => {
 
 		// Process and upload each file
 		const uploadPromises = req.files.map(async (file) => {
-			console.log(`Processing file: ${file.filename}, Path: ${file.path}`);
-			// TODO: Implement image resizing/optimization here using sharp if desired BEFORE upload
-			// Example: const processedBuffer = await sharp(file.path).resize(1024).toBuffer();
+			console.log(
+				`Processing file in memory: ${file.originalname}, Size: ${file.size}`
+			);
 
-			// Read the file content (currently from temp disk storage)
-			const fileContent = fs.readFileSync(file.path);
+			// --- Sharp Processing Pipeline ---
+			let processedBuffer;
+			let processedMetadata;
+			const TARGET_SIZE = 1024 * 1024 * 2; // 2MB
+			let quality = 80;
+			try {
+				let bufferObj;
+				do {
+					bufferObj = await sharp(file.buffer)
+						.resize({
+							width: 1920,
+							fit: sharp.fit.inside,
+							withoutEnlargement: true,
+						})
+						.jpeg({ failOnError: false })
+						.png({ failOnError: false }) // <-- tolerate slight corruption in PNG inputs
+						.webp({ quality, effort: 4 })
+						.toBuffer({ resolveWithObject: true });
+					// If still too big, reduce quality and try again
+					if (bufferObj.data.length > TARGET_SIZE && quality > 40) {
+						quality -= 10;
+					} else {
+						break;
+					}
+				} while (bufferObj.data.length > TARGET_SIZE && quality >= 40);
 
-			// Define filename for storage (use original name or generated one)
-			const storageFilename = `trip_${tripId}_${file.originalname}`; // Example filename
+				processedBuffer = bufferObj;
+				processedMetadata = processedBuffer.info;
+				console.log(
+					`Sharp processing complete for ${file.originalname}. New size: ${processedBuffer.data.length} bytes, quality: ${quality}`
+				);
+			} catch (sharpError) {
+				console.error(
+					`Sharp processing failed for ${file.originalname}:`,
+					sharpError
+				);
+				// Throw an error to stop this file's upload and potentially fail the request
+				throw new Error(
+					`Image processing failed for ${file.originalname}: ${sharpError.message}`
+				);
+			}
+			// --- End Sharp Processing ---
+
+			// Define filename for storage (use original name base + .webp)
+			const originalNameBase = path.parse(file.originalname).name;
+			const storageFilename = `trip_${tripId}_${originalNameBase}_${Date.now()}.webp`; // Ensure unique name and correct extension
+
 			const metadata = {
 				userId: userId.toString(),
 				tripId: tripId,
-				originalFilename: file.originalname,
-				mimetype: file.mimetype,
-				size: file.size,
+				originalFilename: file.originalname, // Keep original name for reference
+				processedFilename: storageFilename,
+				mimetype: "image/webp", // Mimetype is now webp
+				size: processedMetadata.size, // Use size of the processed buffer
+				width: processedMetadata.width, // Store processed dimensions
+				height: processedMetadata.height,
 			};
 
-			// Upload to GridFS using storageService
-			console.log(`Uploading ${storageFilename} to GridFS...`);
+			// Upload the *processed* buffer to GridFS using storageService
+			console.log(`Uploading ${storageFilename} (processed) to GridFS...`);
 			const fileId = await storageService.uploadFile(
-				fileContent,
+				processedBuffer.data, // Pass the actual buffer data
 				storageFilename,
 				metadata
 			);
 			console.log(`Uploaded ${storageFilename} with ID: ${fileId}`);
 
-			// --- IMPORTANT: Clean up temporary file ---
-			fs.unlinkSync(file.path); // Delete file from /uploads folder
-			console.log(`Deleted temporary file: ${file.path}`);
-			// --- End Cleanup ---
+			// --- NO Temporary file cleanup needed with memoryStorage ---
+			// fs.unlinkSync(file.path); // REMOVE THIS LINE
 
 			return fileId; // Return the stored file ID
 		});
@@ -854,15 +900,6 @@ const uploadTripPhotos = async (req, res, next) => {
 		});
 	} catch (error) {
 		console.error(`Error uploading photos for trip ${tripId}:`, error);
-		// Attempt to clean up any files left in the uploads folder from this request
-		if (req.files && req.files.length > 0) {
-			req.files.forEach((file) => {
-				if (fs.existsSync(file.path)) {
-					fs.unlinkSync(file.path);
-					console.log(`Cleaned up errored file: ${file.path}`);
-				}
-			});
-		}
 		next(error);
 	}
 };
