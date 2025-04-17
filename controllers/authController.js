@@ -78,17 +78,13 @@ const loginUser = async (req, res, next) => {
 
 	try {
 		// Find user by email
-		// Explicitly select the password field because it's set to `select: false` in the model
 		const user = await User.findOne({ email }).select("+password");
 
-		// Check if user exists AND if password matches
+		// Check if user exists AND password matches
 		if (user && (await user.matchPassword(password))) {
-			// User authenticated successfully
 			const token = generateToken(user._id);
 
-			// Respond with user data and token
 			res.status(200).json({
-				// 200 OK
 				_id: user._id,
 				username: user.username,
 				email: user.email,
@@ -98,7 +94,7 @@ const loginUser = async (req, res, next) => {
 				followers: user.followers,
 				token: token,
 				createdAt: user.createdAt,
-				updatedAt: user.updatedAt, // Include updatedAt if needed
+				updatedAt: user.updatedAt,
 			});
 		} else {
 			// Authentication failed (user not found or password incorrect)
@@ -106,9 +102,10 @@ const loginUser = async (req, res, next) => {
 			return next(new Error("Invalid email or password"));
 		}
 	} catch (error) {
-		// Catch potential errors
-		res.status(500); // Internal Server Error
-		return next(error);
+		// Log the error for debugging but don't expose details to client
+		console.error("Login error:", error);
+		res.status(500);
+		return next(new Error("An error occurred during login. Please try again."));
 	}
 };
 

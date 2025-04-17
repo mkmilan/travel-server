@@ -1,18 +1,23 @@
-// server/routes/userRoutes.js
 const express = require("express");
 const {
 	getUserProfileById,
 	updateUserProfile,
 	followUser,
 	unfollowUser,
+	searchUsers,
 } = require("../controllers/userController");
 const { protect } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Public route to get any user's profile
+// --- Reorder these routes ---
+// Specific route first
+router.get("/search", searchUsers);
+
+// General parameterized route after
 // GET /api/users/:userId
 router.get("/:userId", getUserProfileById);
+// --- End reorder ---
 
 // Private route for the logged-in user to update their own profile
 // PUT /api/users/me

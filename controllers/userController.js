@@ -107,6 +107,39 @@ const updateUserProfile = async (req, res, next) => {
 };
 
 /**
+ * @desc    Search for users by username
+ * @route   GET /api/users/search?q=query
+ * @access  Public (or Private if needed)
+ */
+const searchUsers = async (req, res, next) => {
+	const query = req.query.q; // Get search query from query parameter 'q'
+
+	if (!query || typeof query !== "string" || query.trim().length === 0) {
+		// Return empty array or bad request if query is missing/invalid
+		return res.status(400).json({ message: "Search query is required." });
+		// Alternatively: return res.json([]);
+	}
+
+	try {
+		// Case-insensitive search for usernames containing the query string
+		// Use a regular expression for partial matching
+		const users = await User.find({
+			username: { $regex: query, $options: "i" }, // 'i' for case-insensitive
+		}).select("_id username profilePictureUrl"); // Select only needed fields
+
+		if (!users || users.length === 0) {
+			// Return empty array if no users found, not an error
+			return res.status(200).json([]);
+		}
+
+		res.status(200).json(users);
+	} catch (error) {
+		console.error("Error searching users:", error);
+		next(error); // Pass error to global handler
+	}
+};
+
+/**
  * @desc    Follow a user
  * @route   POST /api/users/:userId/follow
  * @access  Private
@@ -242,4 +275,5 @@ module.exports = {
 	updateUserProfile,
 	followUser,
 	unfollowUser,
+	searchUsers,
 };
