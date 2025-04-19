@@ -1,6 +1,10 @@
 // server/controllers/userController.js
 const User = require("../models/User");
 const mongoose = require("mongoose");
+const storageService = require("../services/storageService");
+const generateToken = require("../utils/generateToken");
+const sharp = require("sharp");
+const path = require("path");
 
 /**
  * @desc    Get user profile by ID
@@ -22,6 +26,7 @@ const getUserProfileById = async (req, res, next) => {
 			res.status(404); // Not Found
 			throw new Error("User not found");
 		}
+		// console.log("getUserProfileById user", user);
 
 		// Optionally add counts if needed frequently
 		const profileData = {
@@ -51,57 +56,176 @@ const getUserProfileById = async (req, res, next) => {
 };
 
 /**
- * @desc    Update current user's profile
+ * @desc    Update current user's profile (including profile picture)
  * @route   PUT /api/users/me
  * @access  Private
  */
 const updateUserProfile = async (req, res, next) => {
-	// req.user is attached by the 'protect' middleware
 	const userId = req.user._id;
-	const { bio, profilePictureUrl } = req.body; // Get fields to update from body
+	const { bio } = req.body;
+	const file = req.file; // File from uploadSinglePhoto middleware
 
 	try {
-		// Find the user first
 		const user = await User.findById(userId);
-
 		if (!user) {
 			res.status(404);
-			throw new Error("User not found"); // Should not happen if protect middleware worked
+			throw new Error("User not found");
 		}
 
-		// Update fields if they are provided in the request body
-		user.bio = bio !== undefined ? bio : user.bio;
-		user.profilePictureUrl =
-			profilePictureUrl !== undefined
-				? profilePictureUrl
-				: user.profilePictureUrl;
-		// Add other updatable fields here later (e.g., username, email - with care for uniqueness)
+		// Update bio if provided
+		user.bio = bio !== undefined ? bio.trim() : user.bio;
 
-		const updatedUser = await user.save(); // Run validators and save
+		// --- Handle Profile Picture Upload ---
+		if (file) {
+			console.log(
+				`Processing profile picture in memory: ${file.originalname}, Size: ${file.size}`
+			);
 
-		// Respond with updated user data (excluding password)
+			// --- Sharp Processing Pipeline (similar to uploadTripPhotos) ---
+			let processedBufferData;
+			let processedMetadata;
+			// const TARGET_SIZE = 1024 * 1024 * 2; // Target 1MB for profile pics
+			let quality = 80; // Initial quality
+
+			try {
+				let bufferObj;
+				// do {
+				bufferObj = await sharp(file.buffer)
+					.rotate()
+					.resize({
+						width: 800, // Resize profile pics to a max width
+						height: 800, // and max height
+						fit: sharp.fit.inside, // Maintain aspect ratio
+						withoutEnlargement: true, // Don't enlarge small images
+					})
+					.webp({ quality, effort: 4 }) // Convert to WebP with quality setting
+					.toBuffer({ resolveWithObject: true }); // Get buffer and info
+
+				// If still too big, reduce quality and try again
+				// if (bufferObj.data.length > TARGET_SIZE && quality > 50) {
+				// if (bufferObj.data.length > TARGET_SIZE) {
+				// 	quality -= 10;
+				// } else {
+				// 	break; // Exit loop if size is okay or quality is too low
+				// }
+				// } while (bufferObj.data.length > TARGET_SIZE && quality >= 50);
+				// } while (bufferObj.data.length > TARGET_SIZE);
+
+				// **** ADD DETAILED LOGGING HERE ****
+				console.log("--- Sharp Processing Output ---");
+				console.log(`Format: ${processedMetadata.format}`);
+				console.log(`Size (bytes): ${processedMetadata.size}`);
+				console.log(`Width (px): ${processedMetadata.width}`);
+				console.log(`Height (px): ${processedMetadata.height}`);
+				console.log("-----------------------------");
+
+				processedBufferData = bufferObj.data; // The processed image buffer
+				processedMetadata = bufferObj.info; // Info about the processed image (format, size, width, height)
+
+				console.log(
+					`Sharp processing complete for profile picture ${file.originalname}. New size: ${processedMetadata.size} bytes, quality: ${quality}`
+				);
+			} catch (sharpError) {
+				console.error(
+					`Sharp processing failed for profile picture ${file.originalname}:`,
+					sharpError
+				);
+				// Decide if this should stop the update or just skip the picture
+				// For now, let's throw to indicate the picture part failed
+				throw new Error(
+					`Image processing failed for profile picture: ${sharpError.message}`
+				);
+			}
+			// --- End Sharp Processing ---
+
+			// --- Delete Old Photo (if exists) ---
+			if (
+				user.profilePictureUrl
+				//  &&
+				// user.profilePictureUrl.startsWith("/photos/")
+			) {
+				const oldFileId = user.profilePictureUrl.split("/").pop();
+				if (oldFileId && mongoose.Types.ObjectId.isValid(oldFileId)) {
+					try {
+						console.log(
+							`Attempting to delete old profile picture file: ${oldFileId}`
+						);
+						await storageService.deleteFile(oldFileId);
+						console.log(`Deleted old profile picture file: ${oldFileId}`);
+					} catch (deleteError) {
+						console.warn(
+							`Failed to delete old profile picture file ${oldFileId}, continuing...`,
+							deleteError
+						);
+						// Don't block update if old file deletion fails, just log it
+					}
+				}
+			}
+
+			// --- Upload Processed Photo to Storage ---
+			// Define filename for storage (use user ID + timestamp + .webp)
+			const originalNameBase = path.parse(file.originalname).name; // Get base name without extension
+			const storageFilename = `profile_${userId}_${originalNameBase}_${Date.now()}.webp`;
+
+			const metadata = {
+				userId: userId.toString(),
+				originalFilename: file.originalname,
+				processedFilename: storageFilename,
+				mimetype: "image/webp",
+				size: processedMetadata.size,
+				width: processedMetadata.width,
+				height: processedMetadata.height,
+			};
+
+			console.log(
+				`Uploading processed profile picture ${storageFilename} to GridFS...`
+			);
+			const fileId = await storageService.uploadFile(
+				processedBufferData, // Pass the processed buffer
+				storageFilename,
+				"image/webp", // Pass the correct content type
+				metadata // Pass the constructed metadata
+			);
+			console.log(
+				`Uploaded processed profile picture ${storageFilename} with ID: ${fileId}`
+			);
+
+			// Update user's profilePictureUrl with the relative path
+			user.profilePictureUrl = `${fileId}`;
+			console.log("Updated user profilePictureUrl:", user.profilePictureUrl);
+		} // End if (file)
+
+		// Save the updated user document
+		const updatedUser = await user.save();
+		console.log(
+			"Updated user profile profilePicture:",
+			updatedUser.profilePictureUrl
+		);
+
+		// Respond with updated user data
 		res.status(200).json({
 			_id: updatedUser._id,
 			username: updatedUser.username,
-			email: updatedUser.email, // Keep email for the owner's view maybe
+			email: updatedUser.email,
 			bio: updatedUser.bio,
 			profilePictureUrl: updatedUser.profilePictureUrl,
 			following: updatedUser.following,
 			followers: updatedUser.followers,
 			token:
 				req.headers.authorization?.split(" ")[1] ||
-				generateToken(updatedUser._id), // Optionally re-issue token if needed, or just send back existing one from header
+				generateToken(updatedUser._id),
 			createdAt: updatedUser.createdAt,
 			updatedAt: updatedUser.updatedAt,
 		});
 	} catch (error) {
-		// Handle validation errors (e.g., bio too long)
+		// Handle validation errors or other errors
 		if (error.name === "ValidationError") {
 			const messages = Object.values(error.errors).map((val) => val.message);
-			res.status(400); // Bad Request
+			res.status(400);
 			next(new Error(messages.join(", ")));
 		} else {
-			next(error);
+			console.error(`Error updating profile for user ${userId}:`, error);
+			next(error); // Pass other errors to the global handler
 		}
 	}
 };

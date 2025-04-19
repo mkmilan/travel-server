@@ -34,19 +34,28 @@ mongoose.connection.on("error", (err) => {
  * @param {object} [metadata={}] - Optional metadata to store with the file.
  * @returns {Promise<string>} - Promise resolving with the file ID (as a string).
  */
-const uploadFile = (fileContent, filename, metadata = {}) => {
+const uploadFile = (fileBuffer, filename, contentType, metadata = {}) => {
 	return new Promise((resolve, reject) => {
 		if (!gfs) {
 			console.error("GridFSBucket not initialized during uploadFile.");
 			return reject(new Error("Storage service not ready."));
 		}
 
-		const readableStream = new Readable();
-		readableStream.push(fileContent);
-		readableStream.push(null);
+		const readableStream = Readable.from(fileBuffer);
+		// const readableStream = new Readable();
+		// readableStream.push(fileContent);
+		// readableStream.push(null);
 
 		console.log(`GridFS: Starting upload for filename: ${filename}`);
-		const uploadStream = gfs.openUploadStream(filename, { metadata });
+		// const uploadStream = gfs.openUploadStream(filename, { metadata });
+
+		const uploadStream = gfs.openUploadStream(filename, {
+			contentType: contentType, // <-- Store contentType
+			metadata: {
+				...metadata,
+				originalFilename: metadata.originalFilename || filename,
+			}, // Keep original name in metadata
+		});
 
 		uploadStream.once("finish", () => {
 			const fileId = uploadStream.id;

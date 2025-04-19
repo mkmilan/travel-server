@@ -5,6 +5,7 @@ const { getPhotoById } = require("../controllers/photoController");
 const router = express.Router();
 
 // GET /api/photos/:photoId - Stream photo content
+router.get("/photos/:photoId", getPhotoById);
 router.get("/:photoId", getPhotoById);
 
 module.exports = router;
