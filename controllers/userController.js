@@ -112,12 +112,12 @@ const updateUserProfile = async (req, res, next) => {
 				// } while (bufferObj.data.length > TARGET_SIZE);
 
 				// **** ADD DETAILED LOGGING HERE ****
-				console.log("--- Sharp Processing Output ---");
-				console.log(`Format: ${processedMetadata.format}`);
-				console.log(`Size (bytes): ${processedMetadata.size}`);
-				console.log(`Width (px): ${processedMetadata.width}`);
-				console.log(`Height (px): ${processedMetadata.height}`);
-				console.log("-----------------------------");
+				// console.log("--- Sharp Processing Output ---");
+				// console.log(`Format: ${processedMetadata.format}`);
+				// console.log(`Size (bytes): ${processedMetadata.size}`);
+				// console.log(`Width (px): ${processedMetadata.width}`);
+				// console.log(`Height (px): ${processedMetadata.height}`);
+				// console.log("-----------------------------");
 
 				processedBufferData = bufferObj.data; // The processed image buffer
 				processedMetadata = bufferObj.info; // Info about the processed image (format, size, width, height)
