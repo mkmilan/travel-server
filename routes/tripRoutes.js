@@ -16,6 +16,7 @@ const {
 	getTripComments,
 	uploadTripPhotos,
 	deleteTripPhoto,
+	getTripLikers,
 } = require("../controllers/tripController");
 const { protect } = require("../middleware/authMiddleware");
 
@@ -38,6 +39,7 @@ router.post("/:tripId/comments", protect, addCommentToTrip);
 router.get("/:tripId/comments", getTripComments);
 router.post("/:tripId/like", protect, likeTrip);
 router.delete("/:tripId/like", protect, unlikeTrip);
+router.get("/:tripId/likers", getTripLikers);
 
 // --- General Document Route ---
 router.get("/:tripId", getTripById);

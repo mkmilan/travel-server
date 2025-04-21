@@ -974,6 +974,42 @@ const deleteTripPhoto = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Get users who liked a specific trip
+ * @route   GET /api/trips/:tripId/likers
+ * @access  Public (or Private if needed)
+ */
+const getTripLikers = async (req, res, next) => {
+	const { tripId } = req.params;
+
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		res.status(400);
+		return next(new Error(`Invalid Trip ID format: ${tripId}`));
+	}
+
+	try {
+		// Find the trip, select only the 'likes' field, and populate user details
+		const trip = await Trip.findById(tripId)
+			.select("likes") // Select only the likes array
+			.populate({
+				path: "likes", // Path to the user IDs in the likes array
+				select: "username profilePictureUrl", // Fields to populate from User model
+			})
+			.lean(); // Use lean for performance
+
+		if (!trip) {
+			res.status(404);
+			return next(new Error(`Trip not found with ID: ${tripId}`));
+		}
+
+		// The 'likes' field now contains an array of populated user objects
+		res.status(200).json(trip.likes);
+	} catch (error) {
+		console.error(`Error fetching likers for trip ${tripId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	createTrip,
 	getTripById,
@@ -988,4 +1024,5 @@ module.exports = {
 	getTripComments,
 	uploadTripPhotos,
 	deleteTripPhoto,
+	getTripLikers,
 };
