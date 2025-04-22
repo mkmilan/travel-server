@@ -420,7 +420,9 @@ const deleteTrip = async (req, res, next) => {
 	}
 
 	try {
-		const trip = await Trip.findById(tripId);
+		const trip = await Trip.findById(tripId).select(
+			"_id user gpxFileRef photos"
+		);
 
 		if (!trip) {
 			return res.status(204).send();
@@ -441,6 +443,22 @@ const deleteTrip = async (req, res, next) => {
 					`Failed to delete GPX file ${trip.gpxFileRef}: ${deleteError.message}`
 				);
 			}
+		}
+
+		// 2. Delete associated photos if they exist
+		if (trip.photos && trip.photos.length > 0) {
+			const photoDeletionPromises = trip.photos.map(async (photoId) => {
+				try {
+					await storageService.deleteFile(photoId.toString()); // Ensure it's a string
+				} catch (photoDeleteError) {
+					// Log error for individual photo deletion failure but continue
+					console.warn(
+						`Failed to delete photo file ${photoId} (may already be deleted): ${photoDeleteError.message}`
+					);
+				}
+			});
+			// Wait for all photo deletions to attempt completion
+			await Promise.all(photoDeletionPromises);
 		}
 
 		// Delete the trip document
@@ -1010,6 +1028,65 @@ const getTripLikers = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Delete a comment from a trip
+ * @route   DELETE /api/trips/:tripId/comments/:commentId
+ * @access  Private (Comment Owner Only)
+ */
+const deleteCommentFromTrip = async (req, res, next) => {
+	const { tripId, commentId } = req.params;
+	const userId = req.user._id; // From protect middleware
+
+	// Validate IDs
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		res.status(400);
+		return next(new Error(`Invalid Trip ID: ${tripId}`));
+	}
+	if (!mongoose.Types.ObjectId.isValid(commentId)) {
+		res.status(400);
+		return next(new Error(`Invalid Comment ID: ${commentId}`));
+	}
+
+	try {
+		// Find the trip
+		const trip = await Trip.findById(tripId).select("comments"); // Select only comments
+
+		if (!trip) {
+			res.status(404);
+			return next(new Error(`Trip not found with ID: ${tripId}`));
+		}
+
+		// Find the comment within the trip's comments array
+		const comment = trip.comments.id(commentId); // Mongoose subdocument .id() method
+
+		if (!comment) {
+			res.status(404);
+			return next(
+				new Error(`Comment ${commentId} not found in trip ${tripId}`)
+			);
+		}
+
+		// --- Authorization Check: User must own the comment ---
+		if (comment.user.toString() !== userId.toString()) {
+			res.status(403); // Forbidden
+			return next(new Error("User not authorized to delete this comment"));
+		}
+		// --- Delete the comment ---
+		trip.comments = trip.comments.filter((c) => c._id.toString() !== commentId);
+
+		// Save the parent trip document to persist the removal
+		await trip.save();
+
+		res.status(200).json({
+			message: "Comment deleted successfully",
+			commentId: commentId, // Return the ID of the deleted comment
+			comments: trip.comments, // Optionally return the updated comments array
+		});
+	} catch (error) {
+		next(error);
+	}
+};
+
 module.exports = {
 	createTrip,
 	getTripById,
@@ -1025,4 +1102,5 @@ module.exports = {
 	uploadTripPhotos,
 	deleteTripPhoto,
 	getTripLikers,
+	deleteCommentFromTrip,
 };

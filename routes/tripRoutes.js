@@ -17,6 +17,7 @@ const {
 	uploadTripPhotos,
 	deleteTripPhoto,
 	getTripLikers,
+	deleteCommentFromTrip,
 } = require("../controllers/tripController");
 const { protect } = require("../middleware/authMiddleware");
 
@@ -37,6 +38,9 @@ router.delete("/:tripId/photos/:photoId", protect, deleteTripPhoto);
 
 router.post("/:tripId/comments", protect, addCommentToTrip);
 router.get("/:tripId/comments", getTripComments);
+router
+	.route("/:tripId/comments/:commentId")
+	.delete(protect, deleteCommentFromTrip);
 router.post("/:tripId/like", protect, likeTrip);
 router.delete("/:tripId/like", protect, unlikeTrip);
 router.get("/:tripId/likers", getTripLikers);
