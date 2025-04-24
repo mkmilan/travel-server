@@ -832,35 +832,53 @@ const uploadTripPhotos = async (req, res, next) => {
 			);
 
 			// --- Sharp Processing Pipeline ---
-			let processedBuffer;
+			let processedBufferData;
 			let processedMetadata;
-			const TARGET_SIZE = 1024 * 1024 * 2; // 2MB
+			const TARGET_SIZE_KB = 1024;
+			const MAX_DIMENSION = 1920;
 			let quality = 80;
 			try {
 				let bufferObj;
-				do {
-					bufferObj = await sharp(file.buffer)
-						.resize({
-							width: 1920,
-							fit: sharp.fit.inside,
-							withoutEnlargement: true,
-						})
-						.jpeg({ failOnError: false })
-						.png({ failOnError: false }) // <-- tolerate slight corruption in PNG inputs
-						.webp({ quality, effort: 4 })
-						.toBuffer({ resolveWithObject: true });
-					// If still too big, reduce quality and try again
-					if (bufferObj.data.length > TARGET_SIZE && quality > 40) {
-						quality -= 10;
-					} else {
-						break;
-					}
-				} while (bufferObj.data.length > TARGET_SIZE && quality >= 40);
 
-				processedBuffer = bufferObj;
-				processedMetadata = processedBuffer.info;
+				const imageProcessor = await sharp(file.buffer, { failOn: "truncated" })
+					.rotate()
+					.resize({
+						width: MAX_DIMENSION,
+						height: MAX_DIMENSION,
+						fit: sharp.fit.inside,
+						withoutEnlargement: true,
+					});
+				// .jpeg({ failOnError: false })
+				// .png({ failOnError: false }) // <-- tolerate slight corruption in PNG inputs
+				// .webp({ quality, effort: 4 })
+				// .toBuffer({ resolveWithObject: true });
+
+				// Try converting to WebP with reasonably high quality first
+				let currentQuality = 80;
+				bufferObj = await imageProcessor
+					.webp({ quality: currentQuality, effort: 4 }) // effort 4 is a good balance
+					.toBuffer({ resolveWithObject: true });
+
+				// If it's still too large, reduce quality
+				if (bufferObj.data.length > TARGET_SIZE_KB * 1024) {
+					console.log(
+						`Trip photo > ${TARGET_SIZE_KB}KB (${(
+							bufferObj.data.length / 1024
+						).toFixed(1)} KB), reducing quality...`
+					);
+					currentQuality = 65; // Lower quality setting for trip photos if needed
+					bufferObj = await imageProcessor
+						.webp({ quality: currentQuality, effort: 4 })
+						.toBuffer({ resolveWithObject: true });
+				}
+
+				processedBufferData = bufferObj.data;
+				processedMetadata = bufferObj.info;
+
 				console.log(
-					`Sharp processing complete for ${file.originalname}. New size: ${processedBuffer.data.length} bytes, quality: ${quality}`
+					`Sharp processing complete for ${file.originalname}. New size: ${(
+						processedMetadata.size / 1024
+					).toFixed(1)} KB, quality: ${currentQuality}`
 				);
 			} catch (sharpError) {
 				console.error(
@@ -892,8 +910,9 @@ const uploadTripPhotos = async (req, res, next) => {
 			// Upload the *processed* buffer to GridFS using storageService
 			console.log(`Uploading ${storageFilename} (processed) to GridFS...`);
 			const fileId = await storageService.uploadFile(
-				processedBuffer.data, // Pass the actual buffer data
+				processedBufferData, // Pass the actual buffer data
 				storageFilename,
+				"image/webp",
 				metadata
 			);
 			console.log(`Uploaded ${storageFilename} with ID: ${fileId}`);

@@ -84,54 +84,54 @@ const updateUserProfile = async (req, res, next) => {
 			// --- Sharp Processing Pipeline (similar to uploadTripPhotos) ---
 			let processedBufferData;
 			let processedMetadata;
-			// const TARGET_SIZE = 1024 * 1024 * 2; // Target 1MB for profile pics
-			let quality = 80; // Initial quality
+			const TARGET_SIZE_KB = 750; // Target 1MB for profile pics
+			const MAX_DIMENSION = 1080;
+			// let quality = 80; // Initial quality
 
 			try {
-				let bufferObj;
-				// do {
-				bufferObj = await sharp(file.buffer)
-					.rotate()
+				const imageProcessor = sharp(file.buffer, { failOn: "truncated" })
+					.rotate() // Auto-rotate based on EXIF
 					.resize({
-						width: 800, // Resize profile pics to a max width
-						height: 800, // and max height
-						fit: sharp.fit.inside, // Maintain aspect ratio
-						withoutEnlargement: true, // Don't enlarge small images
-					})
-					.webp({ quality, effort: 4 }) // Convert to WebP with quality setting
-					.toBuffer({ resolveWithObject: true }); // Get buffer and info
+						width: MAX_DIMENSION,
+						height: MAX_DIMENSION,
+						fit: sharp.fit.inside, // Maintain aspect ratio within bounds
+						withoutEnlargement: true, // Don't upscale small images
+					});
 
-				// If still too big, reduce quality and try again
-				// if (bufferObj.data.length > TARGET_SIZE && quality > 50) {
-				// if (bufferObj.data.length > TARGET_SIZE) {
-				// 	quality -= 10;
-				// } else {
-				// 	break; // Exit loop if size is okay or quality is too low
-				// }
-				// } while (bufferObj.data.length > TARGET_SIZE && quality >= 50);
-				// } while (bufferObj.data.length > TARGET_SIZE);
+				// Try converting to WebP with reasonably high quality first
+				let currentQuality = 85;
+				let bufferObj = await imageProcessor
+					.webp({ quality: currentQuality, effort: 4 })
+					.toBuffer({ resolveWithObject: true });
 
-				// **** ADD DETAILED LOGGING HERE ****
-				// console.log("--- Sharp Processing Output ---");
-				// console.log(`Format: ${processedMetadata.format}`);
-				// console.log(`Size (bytes): ${processedMetadata.size}`);
-				// console.log(`Width (px): ${processedMetadata.width}`);
-				// console.log(`Height (px): ${processedMetadata.height}`);
-				// console.log("-----------------------------");
+				// If it's still too large, reduce quality
+				if (bufferObj.data.length > TARGET_SIZE_KB * 1024) {
+					console.log(
+						`Profile pic > ${TARGET_SIZE_KB}KB (${(
+							bufferObj.data.length / 1024
+						).toFixed(1)} KB), reducing quality...`
+					);
+					currentQuality = 70; // Lower quality setting
+					bufferObj = await imageProcessor
+						.webp({ quality: currentQuality, effort: 4 })
+						.toBuffer({ resolveWithObject: true });
+				}
 
-				processedBufferData = bufferObj.data; // The processed image buffer
-				processedMetadata = bufferObj.info; // Info about the processed image (format, size, width, height)
+				processedBufferData = bufferObj.data;
+				processedMetadata = bufferObj.info;
 
 				console.log(
-					`Sharp processing complete for profile picture ${file.originalname}. New size: ${processedMetadata.size} bytes, quality: ${quality}`
+					`Sharp processing complete for profile picture ${
+						file.originalname
+					}. New size: ${(processedMetadata.size / 1024).toFixed(
+						1
+					)} KB, quality: ${currentQuality}`
 				);
 			} catch (sharpError) {
 				console.error(
 					`Sharp processing failed for profile picture ${file.originalname}:`,
 					sharpError
 				);
-				// Decide if this should stop the update or just skip the picture
-				// For now, let's throw to indicate the picture part failed
 				throw new Error(
 					`Image processing failed for profile picture: ${sharpError.message}`
 				);
