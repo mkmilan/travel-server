@@ -26,6 +26,27 @@ const commentSchema = new mongoose.Schema(
 	{ _id: true }
 ); // Ensure subdocuments get their own _id
 
+// --- POI Subdocument Schema ---
+// Define this *before* the Trip schema that uses it
+const poiSchema = new mongoose.Schema(
+	{
+		lat: { type: Number, required: true },
+		lon: { type: Number, required: true },
+		timestamp: { type: Date, required: true }, // When the POI was marked
+		name: {
+			type: String,
+			trim: true,
+			maxlength: [100, "POI name cannot exceed 100 characters"],
+		},
+		description: {
+			type: String,
+			trim: true,
+			maxlength: [500, "POI description cannot exceed 500 characters"],
+		},
+	},
+	{ _id: false } // Don't need separate _id for POIs within the trip array
+);
+
 // --- Trip Schema ---
 const tripSchema = new mongoose.Schema(
 	{
@@ -86,6 +107,7 @@ const tripSchema = new mongoose.Schema(
 			type: String, // Using String to accommodate GridFS ObjectId or potentially S3 Keys/URLs later
 			required: true,
 		},
+		pointsOfInterest: [poiSchema],
 		// Optional: For quicker map centering/initial zoom
 		mapCenter: {
 			lat: Number,

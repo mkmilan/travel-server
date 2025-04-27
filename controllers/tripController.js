@@ -51,7 +51,11 @@ const createTrip = async (req, res, next) => {
 				) {
 					reject(new Error("Invalid or empty GPX track data found."));
 				} else {
-					console.log("GPX parsing successful.");
+					console.log(
+						`GPX parsing successful. Found ${
+							data?.waypoints ? data.waypoints.length : 0
+						} waypoints.`
+					);
 					resolve(data);
 				}
 			});
@@ -89,6 +93,20 @@ const createTrip = async (req, res, next) => {
 			tolerance: 0.0001,
 			highQuality: true,
 		});
+
+		// --- Extract and Map Points of Interest (Waypoints) ---
+		let mappedPois = [];
+		if (parsedGpxData.waypoints && parsedGpxData.waypoints.length > 0) {
+			mappedPois = parsedGpxData.waypoints.map((wpt) => ({
+				lat: wpt.lat,
+				lon: wpt.lon,
+				timestamp: wpt.time ? new Date(wpt.time) : new Date(), // Use waypoint time or fallback to now
+				name: wpt.name || null, // Use name if present
+				description: wpt.desc || null, // Use description if present
+			}));
+			console.log(`Mapped ${mappedPois.length} POIs from GPX waypoints.`);
+		}
+
 		let validSimplifiedRoute = null; // Default to null
 		// Check if the simplified coordinates array exists and has at least 2 points
 		if (
@@ -136,7 +154,7 @@ const createTrip = async (req, res, next) => {
 		console.log("Creating Trip document in database...");
 		const newTrip = new Trip({
 			user: userId,
-			title: title || `Trip on ${startDate.toLocaleDateString()}`, // Use provided title or default
+			title: title || `Trip on ${startDate.toLocaleDateString()}`,
 			description,
 			startLocationName,
 			endLocationName,
@@ -144,13 +162,10 @@ const createTrip = async (req, res, next) => {
 			endDate,
 			durationMillis,
 			distanceMeters,
-			gpxFileRef, // Store the GridFS file ID
-			mapCenter, // Store approx center
-			// mapZoom: 12, // Optional: set default zoom
-			simplifiedRoute: validSimplifiedRoute, // Store the simplified GeoJSON
-			// photos: [], // Initialize empty arrays
-			// likes: [],
-			// comments: [],
+			gpxFileRef,
+			pointsOfInterest: mappedPois, // Save the mapped POIs
+			mapCenter,
+			simplifiedRoute: validSimplifiedRoute,
 		});
 
 		const savedTrip = await newTrip.save(); // Save to MongoDB
