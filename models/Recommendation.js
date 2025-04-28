@@ -76,6 +76,12 @@ const recommendationSchema = new mongoose.Schema(
 			index: true,
 			sparse: true,
 		}, // Optional link to the trip if created from a POI
+		associatedPoiId: {
+			type: mongoose.Schema.Types.ObjectId,
+			index: true,
+			sparse: true, // Make it optional and indexable if present
+			default: null,
+		},
 		source: { type: String, enum: ["MANUAL", "POI"], default: "MANUAL" },
 	},
 	{ timestamps: true }

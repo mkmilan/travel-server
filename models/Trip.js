@@ -43,8 +43,8 @@ const poiSchema = new mongoose.Schema(
 			trim: true,
 			maxlength: [500, "POI description cannot exceed 500 characters"],
 		},
-	},
-	{ _id: false } // Don't need separate _id for POIs within the trip array
+	}
+	// { _id: false } // Don't need separate _id for POIs within the trip array
 );
 
 // --- Trip Schema ---

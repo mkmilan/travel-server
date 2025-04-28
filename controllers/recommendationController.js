@@ -20,6 +20,8 @@ const createRecommendation = async (req, res, next) => {
 		latitude, // Expecting coordinates directly for now
 		longitude, // Expecting coordinates directly for now
 		associatedTrip,
+		associatedPoiId,
+		source,
 		// locationSearchTerm, // We'll add geocoding based on this later
 	} = req.body;
 	const userId = req.user._id;
@@ -161,8 +163,9 @@ const createRecommendation = async (req, res, next) => {
 				coordinates: [lon, lat], // Store as [longitude, latitude]
 			},
 			photos: uploadedPhotoIds,
-			source: "MANUAL", // Explicitly set source
+			source: source || "MANUAL", // Explicitly set source
 			associatedTrip: associatedTrip || null,
+			associatedPoiId: associatedPoiId || null,
 		});
 
 		const savedRecommendation = await newRecommendation.save();
