@@ -20,6 +20,9 @@ const {
 	deleteCommentFromTrip,
 } = require("../controllers/tripController");
 const { protect } = require("../middleware/authMiddleware");
+const {
+	getRecommendationsForTrip,
+} = require("../controllers/recommendationController");
 
 const router = express.Router();
 
@@ -44,6 +47,8 @@ router
 router.post("/:tripId/like", protect, likeTrip);
 router.delete("/:tripId/like", protect, unlikeTrip);
 router.get("/:tripId/likers", getTripLikers);
+
+router.route("/:tripId/recommendations").get(getRecommendationsForTrip);
 
 // --- General Document Route ---
 router.get("/:tripId", getTripById);

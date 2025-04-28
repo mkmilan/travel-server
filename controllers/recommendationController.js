@@ -19,6 +19,7 @@ const createRecommendation = async (req, res, next) => {
 		attributeTags, // Expecting an array of strings
 		latitude, // Expecting coordinates directly for now
 		longitude, // Expecting coordinates directly for now
+		associatedTrip,
 		// locationSearchTerm, // We'll add geocoding based on this later
 	} = req.body;
 	const userId = req.user._id;
@@ -62,7 +63,11 @@ const createRecommendation = async (req, res, next) => {
 	}
 
 	// TODO: Add validation for primaryCategory and attributeTags against enum values later if needed
-
+	// Optional: Validate associatedTrip if provided
+	if (associatedTrip && !mongoose.Types.ObjectId.isValid(associatedTrip)) {
+		res.status(400);
+		return next(new Error("Invalid associatedTrip ID format"));
+	}
 	// --- Photo Upload Handling (Similar to tripController) ---
 	let uploadedPhotoIds = [];
 	if (req.files && req.files.length > 0) {
@@ -157,7 +162,7 @@ const createRecommendation = async (req, res, next) => {
 			},
 			photos: uploadedPhotoIds,
 			source: "MANUAL", // Explicitly set source
-			// associatedTrip: null // Not linked to a trip if created manually
+			associatedTrip: associatedTrip || null,
 		});
 
 		const savedRecommendation = await newRecommendation.save();
@@ -223,12 +228,49 @@ const getRecommendationById = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Get recommendations associated with a specific trip
+ * @route   GET /api/trips/:tripId/recommendations
+ * @access  Public (or Private if needed)
+ */
+const getRecommendationsForTrip = async (req, res, next) => {
+	const { tripId } = req.params;
+
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		res.status(400);
+		return next(new Error(`Invalid Trip ID format: ${tripId}`));
+	}
+
+	try {
+		// Find recommendations where associatedTrip matches the tripId
+		const recommendations = await Recommendation.find({
+			associatedTrip: tripId,
+		})
+			.populate("user", "username profilePictureUrl") // Populate user details
+			.sort({ createdAt: -1 }) // Sort by creation date descending
+			.lean();
+
+		// Check if the trip itself exists (optional, but good practice)
+		// const tripExists = await Trip.exists({ _id: tripId });
+		// if (!tripExists) {
+		//     // Or handle differently if needed
+		//     console.warn(`Recommendations requested for non-existent trip ${tripId}`);
+		// }
+
+		res.status(200).json(recommendations);
+	} catch (error) {
+		console.error(`Error fetching recommendations for trip ${tripId}:`, error);
+		next(error);
+	}
+};
+
 // TODO: Add updateRecommendation and deleteRecommendation controllers
 
 module.exports = {
 	createRecommendation,
 	getRecommendations,
 	getRecommendationById,
+	getRecommendationsForTrip,
 	// updateRecommendation,
 	// deleteRecommendation
 };
