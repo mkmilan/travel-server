@@ -82,7 +82,11 @@ const recommendationSchema = new mongoose.Schema(
 			sparse: true, // Make it optional and indexable if present
 			default: null,
 		},
-		source: { type: String, enum: ["MANUAL", "POI"], default: "MANUAL" },
+		source: {
+			type: String,
+			enum: ["MANUAL", "POI", "TRACKING"],
+			default: "MANUAL",
+		},
 	},
 	{ timestamps: true }
 );
