@@ -54,6 +54,7 @@ app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/trips", require("./routes/tripRoutes"));
 app.use("/api/photos", require("./routes/photoRoutes"));
 app.use("/api/recommendations", require("./routes/recommendationRoutes"));
+app.use("/api/search", require("./routes/searchRoutes"));
 
 // --- Custom Error Handling Middleware ---
 const errorHandler = (err, req, res, next) => {

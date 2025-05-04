@@ -51,4 +51,34 @@ const protect = async (req, res, next) => {
 	}
 };
 
-module.exports = { protect };
+// New optional protect middleware
+const protectOptional = async (req, res, next) => {
+	let token;
+
+	if (
+		req.headers.authorization &&
+		req.headers.authorization.startsWith("Bearer")
+	) {
+		try {
+			token = req.headers.authorization.split(" ")[1];
+			const decoded = jwt.verify(token, process.env.JWT_SECRET);
+			// Attach user if token is valid, but don't throw error if user not found yet
+			req.user = await User.findById(decoded.id).select("-password");
+			// No need to check if !req.user here, as it's optional
+		} catch (error) {
+			// Token is invalid or expired, but we don't block the request
+			console.warn(
+				"Optional Auth: Token invalid or expired, proceeding without user.",
+				error.message
+			);
+			req.user = null; // Ensure req.user is null if auth fails
+		}
+	} else {
+		// No token provided
+		req.user = null;
+	}
+
+	next(); // Always proceed
+};
+
+module.exports = { protect, protectOptional };
