@@ -1121,6 +1121,78 @@ const deleteCommentFromTrip = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Add a Point of Interest (POI) to an existing trip
+ * @route   POST /api/trips/:tripId/pois
+ * @access  Private (Owner Only)
+ */
+const addPoiToTrip = async (req, res, next) => {
+	const { tripId } = req.params;
+	const userId = req.user._id;
+	const { name, description, latitude, longitude } = req.body;
+
+	// Validate IDs and coordinates
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		res.status(400);
+		return next(new Error(`Invalid Trip ID: ${tripId}`));
+	}
+	if (
+		typeof latitude !== "number" ||
+		typeof longitude !== "number" ||
+		isNaN(latitude) ||
+		isNaN(longitude)
+	) {
+		res.status(400);
+		return next(new Error("Invalid latitude or longitude provided."));
+	}
+	// Optional: Validate name/description length if needed, matching schema
+	if (name && name.length > 100) {
+		res.status(400);
+		return next(new Error("POI name cannot exceed 100 characters."));
+	}
+	if (description && description.length > 500) {
+		res.status(400);
+		return next(new Error("POI description cannot exceed 500 characters."));
+	}
+
+	try {
+		// Find the trip and verify ownership
+		const trip = await Trip.findOne({ _id: tripId, user: userId }).select(
+			"pointsOfInterest simplifiedRoute"
+		); // Select POIs and route for context
+
+		if (!trip) {
+			res.status(404);
+			return next(new Error("Trip not found or user not authorized"));
+		}
+
+		// Create the new POI subdocument
+		const newPoi = {
+			lat: latitude,
+			lon: longitude,
+			timestamp: new Date(), // Use current time as timestamp for manually added POI
+			name: name?.trim() || null, // Trim or set null
+			description: description?.trim() || null, // Trim or set null
+		};
+
+		// Add the new POI to the array
+		trip.pointsOfInterest.push(newPoi);
+
+		// Save the updated trip
+		await trip.save();
+
+		// Get the newly added POI (it will be the last one in the array)
+		const addedPoi = trip.pointsOfInterest[trip.pointsOfInterest.length - 1];
+
+		console.log(`User ${userId} added POI to trip ${tripId}`);
+		// Respond with the newly created POI object
+		res.status(201).json(addedPoi);
+	} catch (error) {
+		console.error(`Error adding POI to trip ${tripId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	createTrip,
 	getTripById,
@@ -1136,5 +1208,6 @@ module.exports = {
 	uploadTripPhotos,
 	deleteTripPhoto,
 	getTripLikers,
+	addPoiToTrip,
 	deleteCommentFromTrip,
 };
