@@ -5,28 +5,30 @@ const {
 	followUser,
 	unfollowUser,
 	searchUsers,
+	getUserRecommendations,
+	getUserPois,
+	getUserFollowers,
+	getUserFollowing,
 } = require("../controllers/userController");
 const { protect } = require("../middleware/authMiddleware");
 const { uploadSinglePhoto } = require("../config/multerConfig");
 
 const router = express.Router();
 
-// --- Reorder these routes ---
-// Specific route first
 router.get("/search", protect, searchUsers);
 
-// General parameterized route after
-// GET /api/users/:userId
 router.get("/:userId", getUserProfileById);
 // --- End reorder ---
 
-// Private route for the logged-in user to update their own profile
-// PUT /api/users/me
 // Note: We use '/me' here to avoid conflict with '/:userId'.
 // The actual user ID comes from the protect middleware (req.user._id)
 router.put("/me", protect, uploadSinglePhoto, updateUserProfile);
 
 router.post("/:userId/follow", protect, followUser);
 router.delete("/:userId/follow", protect, unfollowUser);
+router.get("/:userId/recommendations", getUserRecommendations);
+router.get("/:userId/pois", getUserPois);
+router.get("/:userId/followers", getUserFollowers);
+router.get("/:userId/following", getUserFollowing);
 
 module.exports = router;

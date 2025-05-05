@@ -1,5 +1,7 @@
 // server/controllers/userController.js
 const User = require("../models/User");
+const Trip = require("../models/Trip");
+const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const storageService = require("../services/storageService");
 const generateToken = require("../utils/generateToken");
@@ -11,47 +13,118 @@ const path = require("path");
  * @route   GET /api/users/:userId
  * @access  Public
  */
+// const getUserProfileById = async (req, res, next) => {
+// 	const userId = req.params.userId;
+
+// 	// Validate ID format first
+// 	if (!mongoose.Types.ObjectId.isValid(userId)) {
+// 		res.status(400);
+// 		return next(new Error(`Invalid user ID format: ${userId}`));
+// 	}
+// 	try {
+// 		const user = await User.findById(userId).select("-password -email");
+// 		// .populate("followers", "username") // Optionally get usernames of followers
+// 		// .populate("following", "username"); // Optionally get usernames of following
+
+// 		if (!user) {
+// 			res.status(404); // Not Found
+// 			throw new Error("User not found");
+// 		}
+
+// 		// Optionally add counts if needed frequently
+// 		const profileData = {
+// 			_id: user._id,
+// 			username: user.username,
+// 			bio: user.bio,
+// 			profilePictureUrl: user.profilePictureUrl,
+// 			followersCount: user.followers.length,
+// 			followingCount: user.following.length,
+// 			followers: user.followers.map((id) => id.toString()),
+// 			following: user.following.map((id) => id.toString()),
+// 			createdAt: user.createdAt,
+// 		};
+
+// 		res.status(200).json(profileData);
+// 	} catch (error) {
+// 		// Handle potential CastError if userId format is invalid
+// 		if (error.name === "CastError") {
+// 			res.status(400); // Bad Request
+// 			next(new Error(`Invalid user ID format: ${req.params.userId}`));
+// 		} else {
+// 			next(error); // Pass other errors to the global error handler
+// 		}
+// 	}
+// };
 const getUserProfileById = async (req, res, next) => {
+	const userId = req.params.userId;
+
+	// Validate ID format first
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${userId}`));
+	}
+
 	try {
-		// Fetch user by ID passed in the route parameter
-		// Exclude sensitive fields like password, email (unless needed publicly)
-		// We also populate some follower/following counts for display
-		const user = await User.findById(req.params.userId).select(
-			"-password -email"
-		); // Exclude password and email
-		// .populate("followers", "username") // Optionally get usernames of followers
-		// .populate("following", "username"); // Optionally get usernames of following
+		// Fetch user and perform aggregations/counts in parallel
+		const [user, tripStats, recommendationCount, poiCountResult] =
+			await Promise.all([
+				User.findById(userId).select("-password -email"), // Exclude sensitive fields
+				Trip.aggregate([
+					// Aggregate total distance and count trips for the user
+					{ $match: { user: new mongoose.Types.ObjectId(userId) } },
+					{
+						$group: {
+							_id: null, // Group all trips for the user
+							totalDistance: { $sum: "$distanceMeters" },
+							totalTrips: { $sum: 1 },
+						},
+					},
+				]),
+				Recommendation.countDocuments({ user: userId }),
+
+				Trip.aggregate([
+					// Aggregate total POIs for the user
+					{ $match: { user: new mongoose.Types.ObjectId(userId) } },
+					{
+						$project: {
+							poiCount: { $size: { $ifNull: ["$pointsOfInterest", []] } },
+						},
+					},
+					{ $group: { _id: null, totalPois: { $sum: "$poiCount" } } },
+				]),
+			]);
 
 		if (!user) {
 			res.status(404); // Not Found
 			throw new Error("User not found");
 		}
-		// console.log("getUserProfileById user", user);
 
-		// Optionally add counts if needed frequently
+		// Extract results from aggregations (handle cases where user has no trips/pois)
+		const totalDistance = tripStats[0]?.totalDistance || 0;
+		const totalTrips = tripStats[0]?.totalTrips || 0;
+		const totalPois = poiCountResult[0]?.totalPois || 0;
+
+		// Construct the profile data object
 		const profileData = {
 			_id: user._id,
 			username: user.username,
 			bio: user.bio,
 			profilePictureUrl: user.profilePictureUrl,
-			followersCount: user.followers.length,
-			followingCount: user.following.length,
-			followers: user.followers.map((id) => id.toString()),
-			// followers: user.followers, // Optionally send full list if needed
-			// following: user.following, // Optionally send full list if needed
+			followersCount: user.followers.length, // Existing count
+			followingCount: user.following.length, // Existing count
+			// followers: user.followers.map((id) => id.toString()),
 			createdAt: user.createdAt,
-			// Add any other public fields as needed (e.g., trip count later)
+			totalDistance: Math.round(totalDistance), // Round distance to nearest meter
+			totalTrips: totalTrips,
+			totalRecommendations: recommendationCount,
+			totalPois: totalPois,
 		};
 
 		res.status(200).json(profileData);
 	} catch (error) {
-		// Handle potential CastError if userId format is invalid
-		if (error.name === "CastError") {
-			res.status(400); // Bad Request
-			next(new Error(`Invalid user ID format: ${req.params.userId}`));
-		} else {
-			next(error); // Pass other errors to the global error handler
-		}
+		// Specific CastError handling moved to validation check above
+		console.error(`Error fetching profile for user ${userId}:`, error);
+		next(error); // Pass other errors to the global error handler
 	}
 };
 
@@ -394,10 +467,223 @@ const unfollowUser = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Get recommendations created by a specific user
+ * @route   GET /api/users/:userId/recommendations
+ * @access  Public
+ */
+const getUserRecommendations = async (req, res, next) => {
+	const userId = req.params.userId;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 10; // Default limit 10 per page
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${userId}`));
+	}
+
+	try {
+		const [recommendations, totalCount] = await Promise.all([
+			Recommendation.find({ user: userId })
+				.select(
+					"_id name description rating primaryCategory user createdAt location"
+				) // Select fields needed for list display
+				.sort({ createdAt: -1 }) // Sort by newest first
+				.skip(skip)
+				.limit(limit),
+			Recommendation.countDocuments({ user: userId }),
+		]);
+
+		res.status(200).json({
+			data: recommendations,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+			totalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching recommendations for user ${userId}:`, error);
+		next(error);
+	}
+};
+
+/**
+ * @desc    Get POIs created by a specific user (aggregated from trips)
+ * @route   GET /api/users/:userId/pois
+ * @access  Public
+ */
+const getUserPois = async (req, res, next) => {
+	const userId = req.params.userId;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 10; // Default limit 10 per page
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${userId}`));
+	}
+
+	try {
+		// Aggregation pipeline to extract and paginate POIs
+		const aggregationPipeline = [
+			{ $match: { user: new mongoose.Types.ObjectId(userId) } }, // Match user's trips
+			{ $unwind: "$pointsOfInterest" }, // Deconstruct the POI array
+			{ $sort: { "pointsOfInterest.timestamp": -1 } }, // Sort POIs by timestamp (newest first)
+			{
+				$project: {
+					// Reshape the output to focus on POI details
+					_id: "$pointsOfInterest._id", // Use POI's _id if available, or generate one if needed
+					name: "$pointsOfInterest.name",
+					description: "$pointsOfInterest.description",
+					location: "$pointsOfInterest.location",
+					timestamp: "$pointsOfInterest.timestamp",
+					tripId: "$_id", // Include the trip ID for context
+					tripTitle: "$title", // Include trip title for context
+				},
+			},
+			{
+				$facet: {
+					// Use $facet for pagination within aggregation
+					metadata: [{ $count: "totalCount" }],
+					data: [{ $skip: skip }, { $limit: limit }],
+				},
+			},
+		];
+
+		const results = await Trip.aggregate(aggregationPipeline);
+
+		const pois = results[0].data;
+		const totalCount = results[0].metadata[0]?.totalCount || 0;
+
+		res.status(200).json({
+			data: pois,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+			totalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching POIs for user ${userId}:`, error);
+		next(error);
+	}
+};
+/**
+ * @desc    Get list of users following a specific user
+ * @route   GET /api/users/:userId/followers
+ * @access  Public (or Private if auth needed for follow status)
+ */
+const getUserFollowers = async (req, res, next) => {
+	const userId = req.params.userId;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 15; // Adjust limit as needed
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${userId}`));
+	}
+
+	try {
+		// Find the target user and populate their followers list with pagination
+		const user = await User.findById(userId)
+			.select("followers") // Only select the followers field initially
+			.populate({
+				path: "followers", // Populate the followers array
+				select: "_id username profilePictureUrl followers", // Select needed fields for each follower (incl. *their* followers for button state)
+				options: {
+					sort: { username: 1 }, // Sort followers alphabetically
+					skip: skip,
+					limit: limit,
+				},
+			});
+
+		if (!user) {
+			res.status(404);
+			throw new Error("User not found");
+		}
+
+		// Get total count separately for pagination metadata
+		const totalCount = await User.countDocuments({
+			_id: { $in: user.followers },
+		}); // This might be slightly off if populate fails, better to count on the target user's followers array length before populating if possible, but that's complex. Let's stick to populating first.
+		// A more accurate count requires fetching the user without pagination first.
+		const targetUser = await User.findById(userId).select("followers");
+		const accurateTotalCount = targetUser ? targetUser.followers.length : 0;
+
+		res.status(200).json({
+			data: user.followers, // The populated array (limited by pagination)
+			page,
+			limit,
+			totalPages: Math.ceil(accurateTotalCount / limit),
+			totalCount: accurateTotalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching followers for user ${userId}:`, error);
+		next(error);
+	}
+};
+
+/**
+ * @desc    Get list of users a specific user is following
+ * @route   GET /api/users/:userId/following
+ * @access  Public (or Private if auth needed for follow status)
+ */
+const getUserFollowing = async (req, res, next) => {
+	const userId = req.params.userId;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 15;
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${userId}`));
+	}
+
+	try {
+		// Find the target user and populate their following list with pagination
+		const user = await User.findById(userId)
+			.select("following")
+			.populate({
+				path: "following",
+				select: "_id username profilePictureUrl followers", // Select needed fields (incl. *their* followers for button state)
+				options: {
+					sort: { username: 1 },
+					skip: skip,
+					limit: limit,
+				},
+			});
+
+		if (!user) {
+			res.status(404);
+			throw new Error("User not found");
+		}
+
+		// Get total count accurately
+		const targetUser = await User.findById(userId).select("following");
+		const accurateTotalCount = targetUser ? targetUser.following.length : 0;
+
+		res.status(200).json({
+			data: user.following, // The populated array
+			page,
+			limit,
+			totalPages: Math.ceil(accurateTotalCount / limit),
+			totalCount: accurateTotalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching following list for user ${userId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	getUserProfileById,
 	updateUserProfile,
 	followUser,
 	unfollowUser,
 	searchUsers,
+	getUserRecommendations,
+	getUserPois,
+	getUserFollowers,
+	getUserFollowing,
 };
