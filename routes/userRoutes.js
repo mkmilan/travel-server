@@ -9,6 +9,7 @@ const {
 	getUserPois,
 	getUserFollowers,
 	getUserFollowing,
+	getUserPhotos,
 } = require("../controllers/userController");
 const { protect } = require("../middleware/authMiddleware");
 const { uploadSinglePhoto } = require("../config/multerConfig");
@@ -30,5 +31,6 @@ router.get("/:userId/recommendations", getUserRecommendations);
 router.get("/:userId/pois", getUserPois);
 router.get("/:userId/followers", getUserFollowers);
 router.get("/:userId/following", getUserFollowing);
+router.get("/:userId/photos", getUserPhotos);
 
 module.exports = router;

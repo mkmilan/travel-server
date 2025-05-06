@@ -676,6 +676,113 @@ const getUserFollowing = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Get photos associated with a specific user (from trips, recommendations, profile)
+ * @route   GET /api/users/:userId/photos
+ * @access  Public
+ */
+const getUserPhotos = async (req, res, next) => {
+	const { userId } = req.params;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 12; // e.g., 12 photos per page for a gallery
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${userId}`));
+	}
+
+	try {
+		const userObjectId = new mongoose.Types.ObjectId(userId);
+		let allPhotoEntries = [];
+
+		// 1. Get User's Profile Picture
+		const userProfile = await User.findById(userObjectId).select(
+			"profilePictureUrl createdAt"
+		);
+		if (userProfile && userProfile.profilePictureUrl) {
+			// Assuming profilePictureUrl directly stores the GridFS ID
+			if (mongoose.Types.ObjectId.isValid(userProfile.profilePictureUrl)) {
+				allPhotoEntries.push({
+					photoId: userProfile.profilePictureUrl,
+					sourceDate: userProfile.createdAt, // Use user creation date as a proxy
+					context: "Profile Picture",
+					uniqueKey: `profile-${userProfile.profilePictureUrl}`,
+				});
+			}
+		}
+
+		// 2. Get Photos from User's Trips
+		const trips = await Trip.find({ user: userObjectId })
+			.select("photos createdAt title")
+			.sort({ createdAt: -1 });
+
+		trips.forEach((trip) => {
+			trip.photos.forEach((photoId) => {
+				if (mongoose.Types.ObjectId.isValid(photoId)) {
+					allPhotoEntries.push({
+						photoId: photoId.toString(),
+						sourceDate: trip.createdAt,
+						context: `Trip: ${trip.title}`,
+						uniqueKey: `trip-${trip._id}-${photoId.toString()}`,
+					});
+				}
+			});
+		});
+
+		// 3. Get Photos from User's Recommendations
+		const recommendations = await Recommendation.find({ user: userObjectId })
+			.select("photos createdAt name")
+			.sort({ createdAt: -1 });
+
+		recommendations.forEach((rec) => {
+			rec.photos.forEach((photoId) => {
+				if (mongoose.Types.ObjectId.isValid(photoId)) {
+					allPhotoEntries.push({
+						photoId: photoId.toString(),
+						sourceDate: rec.createdAt,
+						context: `Recommendation: ${rec.name}`,
+						uniqueKey: `rec-${rec._id}-${photoId.toString()}`,
+					});
+				}
+			});
+		});
+
+		// 4. Sort all photos by sourceDate (newest first)
+		allPhotoEntries.sort((a, b) => b.sourceDate - a.sourceDate);
+
+		// 5. Create a unique list based on photoId, keeping the first encountered (most recent context due to sort)
+		// This is important if a photo ID could theoretically appear in multiple contexts, though unlikely with current setup.
+		const uniquePhotosMap = new Map();
+		allPhotoEntries.forEach((entry) => {
+			if (!uniquePhotosMap.has(entry.photoId)) {
+				uniquePhotosMap.set(entry.photoId, entry);
+			}
+		});
+		const uniqueSortedPhotoEntries = Array.from(uniquePhotosMap.values());
+
+		// 6. Apply Pagination
+		const totalCount = uniqueSortedPhotoEntries.length;
+		const paginatedPhotos = uniqueSortedPhotoEntries.slice(skip, skip + limit);
+		const totalPages = Math.ceil(totalCount / limit);
+
+		res.status(200).json({
+			data: paginatedPhotos.map((p) => ({
+				photoId: p.photoId,
+				context: p.context,
+				sourceDate: p.sourceDate,
+			})), // Send necessary info
+			page,
+			limit,
+			totalPages,
+			totalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching photos for user ${userId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	getUserProfileById,
 	updateUserProfile,
@@ -686,4 +793,5 @@ module.exports = {
 	getUserPois,
 	getUserFollowers,
 	getUserFollowing,
+	getUserPhotos,
 };
