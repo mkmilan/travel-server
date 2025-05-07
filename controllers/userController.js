@@ -705,9 +705,11 @@ const getUserPhotos = async (req, res, next) => {
 			if (mongoose.Types.ObjectId.isValid(userProfile.profilePictureUrl)) {
 				allPhotoEntries.push({
 					photoId: userProfile.profilePictureUrl,
-					sourceDate: userProfile.createdAt, // Use user creation date as a proxy
+					sourceDate: userProfile.createdAt,
 					context: "Profile Picture",
 					uniqueKey: `profile-${userProfile.profilePictureUrl}`,
+					sourceType: "profile",
+					sourceId: null,
 				});
 			}
 		}
@@ -725,6 +727,8 @@ const getUserPhotos = async (req, res, next) => {
 						sourceDate: trip.createdAt,
 						context: `Trip: ${trip.title}`,
 						uniqueKey: `trip-${trip._id}-${photoId.toString()}`,
+						sourceType: "trip",
+						sourceId: trip._id.toString(),
 					});
 				}
 			});
@@ -743,6 +747,8 @@ const getUserPhotos = async (req, res, next) => {
 						sourceDate: rec.createdAt,
 						context: `Recommendation: ${rec.name}`,
 						uniqueKey: `rec-${rec._id}-${photoId.toString()}`,
+						sourceType: "recommendation",
+						sourceId: rec._id.toString(),
 					});
 				}
 			});
@@ -771,6 +777,8 @@ const getUserPhotos = async (req, res, next) => {
 				photoId: p.photoId,
 				context: p.context,
 				sourceDate: p.sourceDate,
+				sourceType: p.sourceType,
+				sourceId: p.sourceId,
 			})), // Send necessary info
 			page,
 			limit,
