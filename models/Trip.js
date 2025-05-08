@@ -43,6 +43,16 @@ const poiSchema = new mongoose.Schema(
 			trim: true,
 			maxlength: [500, "POI description cannot exceed 500 characters"],
 		},
+		category: {
+			type: String,
+			trim: true,
+			maxlength: [50, "Category cannot exceed 50 characters"],
+		},
+		externalLink: {
+			type: String,
+			trim: true,
+			maxlength: [200, "External link cannot exceed 200 characters"],
+		},
 	},
 	{ _id: true } // Don't need separate _id for POIs within the trip array
 );

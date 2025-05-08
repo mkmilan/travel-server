@@ -7,7 +7,7 @@ const {
 	getRecommendations,
 	getRecommendationById,
 	// updateRecommendation,
-	// deleteRecommendation
+	deleteRecommendation,
 } = require("../controllers/recommendationController");
 
 const router = express.Router();
@@ -30,6 +30,6 @@ router.get("/:recommendationId", getRecommendationById); // Public for now
 // router.put('/:recommendationId', protect, updateRecommendation);
 
 // TODO: Add DELETE /:recommendationId route for deletion (protected, owner only)
-// router.delete('/:recommendationId', protect, deleteRecommendation);
+router.delete("/:recommendationId", protect, deleteRecommendation);
 
 module.exports = router;

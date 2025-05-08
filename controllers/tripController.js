@@ -3,6 +3,7 @@ const gpxParse = require("gpx-parse");
 const turf = require("@turf/turf"); // For distance calculation and potentially simplification
 const Trip = require("../models/Trip");
 const User = require("../models/User");
+const Recommendation = require("../models/Recommendation");
 const storageService = require("../services/storageService");
 const mongoose = require("mongoose");
 const fs = require("fs");
@@ -434,16 +435,22 @@ const deleteTrip = async (req, res, next) => {
 		return next(new Error(`Invalid Trip ID format: ${tripId}`));
 	}
 
+	// const session = await mongoose.startSession(); // Use a session for atomicity
+	// session.startTransaction();
+
 	try {
 		const trip = await Trip.findById(tripId).select(
 			"_id user gpxFileRef photos"
 		);
+		// .session(session);
 
 		if (!trip) {
+			// await session.commitTransaction();
 			return res.status(204).send();
 		}
 
 		if (trip.user.toString() !== userId.toString()) {
+			// await session.abortTransaction();
 			res.status(403);
 			return next(new Error("User not authorized to delete this trip"));
 		}
@@ -476,14 +483,46 @@ const deleteTrip = async (req, res, next) => {
 			await Promise.all(photoDeletionPromises);
 		}
 
+		// 3. Find and delete associated recommendations and their photos
+		const recommendationsToDelete = await Recommendation.find({
+			associatedTrip: tripId,
+		}).select("photos");
+		// .session(session);
+
+		if (recommendationsToDelete.length > 0) {
+			for (const rec of recommendationsToDelete) {
+				if (rec.photos && rec.photos.length > 0) {
+					const recPhotoDeletionPromises = rec.photos.map(async (photoId) => {
+						try {
+							await storageService.deleteFile(photoId.toString());
+						} catch (recPhotoDeleteError) {
+							console.warn(
+								`Failed to delete recommendation photo file ${photoId} for trip ${tripId}: ${recPhotoDeleteError.message}`
+							);
+						}
+					});
+					await Promise.all(recPhotoDeletionPromises);
+				}
+			}
+			// Delete the recommendation documents
+			await Recommendation.deleteMany({ associatedTrip: tripId });
+			// .session(	session);
+		}
+
 		// Delete the trip document
 		await Trip.deleteOne({ _id: tripId });
+		// .session(session);
 
+		// await session.commitTransaction();
 		res.status(200).json({ message: "Trip deleted successfully" });
 	} catch (error) {
+		// await session.abortTransaction();
 		console.error(`Error deleting trip ${tripId}:`, error);
 		next(error);
 	}
+	//  finally {
+	// 	session.endSession();
+	// }
 };
 
 /**

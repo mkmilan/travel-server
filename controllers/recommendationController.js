@@ -267,6 +267,76 @@ const getRecommendationsForTrip = async (req, res, next) => {
 	}
 };
 
+// @desc    Delete a recommendation
+// @route   DELETE /api/recommendations/:recommendationId
+// @access  Private (Owner only)
+const deleteRecommendation = async (req, res, next) => {
+	const { recommendationId } = req.params;
+	const userId = req.user._id; // Assuming 'protect' middleware
+
+	if (!mongoose.Types.ObjectId.isValid(recommendationId)) {
+		res.status(400);
+		return next(
+			new Error(`Invalid Recommendation ID format: ${recommendationId}`)
+		);
+	}
+
+	// const session = await mongoose.startSession();
+	// session.startTransaction();
+
+	try {
+		const recommendation = await Recommendation.findById(
+			recommendationId
+		).select("user photos");
+		// .session(session);
+
+		if (!recommendation) {
+			// await session.commitTransaction(); // Or abort, then commit if preferred for idempotency
+			return res.status(204).send(); // Not found, but delete is idempotent
+		}
+
+		// Authorization check: Ensure the user owns the recommendation
+		if (recommendation.user.toString() !== userId.toString()) {
+			// await session.abortTransaction();
+			res.status(403);
+			return next(
+				new Error("User not authorized to delete this recommendation")
+			);
+		}
+
+		// Delete associated photos from storageService
+		if (recommendation.photos && recommendation.photos.length > 0) {
+			const photoDeletionPromises = recommendation.photos.map(
+				async (photoId) => {
+					try {
+						await storageService.deleteFile(photoId.toString());
+					} catch (deleteError) {
+						console.warn(
+							`Failed to delete photo file ${photoId} for recommendation ${recommendationId}: ${deleteError.message}`
+						);
+						// Decide if this should abort the transaction
+					}
+				}
+			);
+			await Promise.all(photoDeletionPromises);
+		}
+
+		// Delete the recommendation document
+		await Recommendation.deleteOne({ _id: recommendationId });
+		// .session(session);
+
+		// await session.commitTransaction();
+		res.status(200).json({ message: "Recommendation deleted successfully" });
+	} catch (error) {
+		// await session.abortTransaction();
+		console.error(`Error deleting recommendation ${recommendationId}:`, error);
+		next(error);
+	}
+	// finally {
+	// 	session.endSession();
+	// }
+};
+
 // TODO: Add updateRecommendation and deleteRecommendation controllers
 
 module.exports = {
@@ -275,5 +345,5 @@ module.exports = {
 	getRecommendationById,
 	getRecommendationsForTrip,
 	// updateRecommendation,
-	// deleteRecommendation
+	deleteRecommendation,
 };
