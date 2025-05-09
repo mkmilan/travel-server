@@ -791,6 +791,75 @@ const getUserPhotos = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Get current user's settings
+ * @route   GET /api/users/settings
+ * @access  Private
+ */
+const getUserSettings = async (req, res, next) => {
+	try {
+		const user = await User.findById(req.user._id).select("settings");
+		if (!user) {
+			res.status(404);
+			throw new Error("User not found");
+		}
+		res.json(user.settings);
+	} catch (error) {
+		next(error);
+	}
+};
+
+/**
+ * @desc    Update current user's settings
+ * @route   PUT /api/users/settings
+ * @access  Private
+ */
+const updateUserSettings = async (req, res, next) => {
+	try {
+		const userId = req.user._id;
+		const {
+			defaultTripVisibility,
+			defaultTravelMode,
+			preferredUnits,
+			themePreference,
+			dateFormat,
+			timeFormat,
+		} = req.body;
+
+		const user = await User.findById(userId);
+
+		if (!user) {
+			res.status(404);
+			throw new Error("User not found");
+		}
+
+		// Update only the fields that are provided in the request
+		if (defaultTripVisibility !== undefined)
+			user.settings.defaultTripVisibility = defaultTripVisibility;
+		if (defaultTravelMode !== undefined)
+			user.settings.defaultTravelMode = defaultTravelMode;
+		if (preferredUnits !== undefined)
+			user.settings.preferredUnits = preferredUnits;
+		if (themePreference !== undefined)
+			user.settings.themePreference = themePreference;
+		if (dateFormat !== undefined) user.settings.dateFormat = dateFormat;
+		if (timeFormat !== undefined) user.settings.timeFormat = timeFormat;
+
+		const updatedUser = await user.save();
+
+		res.json({
+			message: "Settings updated successfully",
+			settings: updatedUser.settings,
+		});
+	} catch (error) {
+		// Handle potential validation errors from the model
+		if (error.name === "ValidationError") {
+			res.status(400);
+		}
+		next(error);
+	}
+};
+
 module.exports = {
 	getUserProfileById,
 	updateUserProfile,
@@ -802,4 +871,6 @@ module.exports = {
 	getUserFollowers,
 	getUserFollowing,
 	getUserPhotos,
+	getUserSettings,
+	updateUserSettings,
 };

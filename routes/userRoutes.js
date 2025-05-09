@@ -10,6 +10,8 @@ const {
 	getUserFollowers,
 	getUserFollowing,
 	getUserPhotos,
+	getUserSettings,
+	updateUserSettings,
 } = require("../controllers/userController");
 const { protect } = require("../middleware/authMiddleware");
 const { uploadSinglePhoto } = require("../config/multerConfig");
@@ -17,7 +19,8 @@ const { uploadSinglePhoto } = require("../config/multerConfig");
 const router = express.Router();
 
 router.get("/search", protect, searchUsers);
-
+router.get("/settings", protect, getUserSettings);
+router.put("/settings", protect, updateUserSettings);
 router.get("/:userId", getUserProfileById);
 // --- End reorder ---
 

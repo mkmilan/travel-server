@@ -52,6 +52,46 @@ const userSchema = new mongoose.Schema(
 				ref: "User",
 			},
 		],
+		settings: {
+			defaultTripVisibility: {
+				type: String,
+				enum: ["public", "followers_only", "private"],
+				default: "public",
+			},
+			defaultTravelMode: {
+				type: String,
+				enum: [
+					"motorhome",
+					"campervan",
+					"car",
+					"motorcycle",
+					"bicycle",
+					"walking",
+					"",
+				], // Added "" for unset
+				default: "motorhome",
+			},
+			preferredUnits: {
+				type: String,
+				enum: ["metric", "imperial"],
+				default: "metric",
+			},
+			themePreference: {
+				type: String,
+				enum: ["light", "dark", "system"],
+				default: "system",
+			},
+			dateFormat: {
+				type: String,
+				enum: ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"],
+				default: "YYYY-MM-DD", // ISO standard
+			},
+			timeFormat: {
+				type: String,
+				enum: ["12h", "24h"],
+				default: "24h",
+			},
+		},
 		// MongoDB automatically adds createdAt and updatedAt if timestamps: true
 	},
 	{
