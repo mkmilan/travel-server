@@ -80,6 +80,24 @@ const tripSchema = new mongoose.Schema(
 			maxlength: [2000, "Description cannot exceed 2000 characters"],
 			default: "",
 		},
+		defaultTripVisibility: {
+			type: String,
+			enum: ["public", "followers_only", "private"],
+			default: "public",
+		},
+		defaultTravelMode: {
+			type: String,
+			enum: [
+				"motorhome",
+				"campervan",
+				"car",
+				"motorcycle",
+				"bicycle",
+				"walking",
+				"",
+			],
+			default: "motorhome",
+		},
 		startLocationName: {
 			// User-defined start location (e.g., "City A")
 			type: String,

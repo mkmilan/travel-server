@@ -17,9 +17,17 @@ const sharp = require("sharp");
 const createTrip = async (req, res, next) => {
 	// Destructure data from request body
 	// Expecting: title, description, startLocationName, endLocationName, gpxString
-	const { title, description, startLocationName, endLocationName, gpxString } =
-		req.body;
+	const {
+		title,
+		description,
+		startLocationName,
+		endLocationName,
+		gpxString,
+		defaultTripVisibility,
+		defaultTravelMode,
+	} = req.body;
 	const userId = req.user._id; // From 'protect' middleware
+	const userSettings = req.user.settings;
 
 	// Basic validation
 	if (!gpxString) {
@@ -163,6 +171,14 @@ const createTrip = async (req, res, next) => {
 			endDate,
 			durationMillis,
 			distanceMeters,
+			defaultTripVisibility:
+				defaultTripVisibility ||
+				userSettings?.defaultTripVisibility ||
+				Trip.schema.path("defaultTripVisibility").defaultValue,
+			defaultTravelMode:
+				defaultTravelMode ||
+				userSettings?.defaultTravelMode ||
+				Trip.schema.path("defaultTravelMode").defaultValue,
 			gpxFileRef,
 			pointsOfInterest: mappedPois, // Save the mapped POIs
 			mapCenter,
@@ -341,6 +357,7 @@ const getMyTrips = async (req, res, next) => {
 					endLocationName: 1,
 					description: { $substrCP: ["$description", 0, 150] }, // Get first 150 chars of description
 					simplifiedRoute: 1, // Include simplified route for mini-map
+					defaultTravelMode: 1,
 					likesCount: { $size: "$likes" }, // Calculate size of likes array
 					commentsCount: { $size: "$comments" }, // Calculate size of comments array
 					// Exclude large/unused fields explicitly if necessary (though $project includes only specified)
@@ -366,8 +383,20 @@ const updateTrip = async (req, res, next) => {
 	const { tripId } = req.params;
 	const userId = req.user._id; // From 'protect' middleware
 	// Only allow updating certain fields
-	const { title, description, startLocationName, endLocationName } = req.body;
+	const {
+		title,
+		description,
+		startLocationName,
+		endLocationName,
+		defaultTravelMode,
+		defaultTripVisibility,
+	} = req.body;
 
+	// Use enums directly from the model for validation
+	const allowedVisibilities = Trip.schema.path(
+		"defaultTripVisibility"
+	).enumValues;
+	const allowedTravelModes = Trip.schema.path("defaultTravelMode").enumValues;
 	// Validate ObjectId format
 	if (!mongoose.Types.ObjectId.isValid(tripId)) {
 		res.status(400);
@@ -399,6 +428,24 @@ const updateTrip = async (req, res, next) => {
 		if (endLocationName !== undefined)
 			trip.endLocationName = endLocationName.trim();
 		// Note: We are NOT allowing updates to dates, distance, GPX ref, route etc. via this endpoint
+
+		if (defaultTripVisibility !== undefined) {
+			if (!allowedVisibilities.includes(defaultTripVisibility)) {
+				res.status(400);
+				return next(
+					new Error(`Invalid trip visibility: ${defaultTripVisibility}`)
+				);
+			}
+			trip.defaultTripVisibility = defaultTripVisibility;
+		}
+
+		if (defaultTravelMode !== undefined) {
+			if (!allowedTravelModes.includes(defaultTravelMode)) {
+				res.status(400);
+				return next(new Error(`Invalid travel mode: ${defaultTravelMode}`));
+			}
+			trip.defaultTravelMode = defaultTravelMode;
+		}
 
 		// Save the updated trip (this will also run Mongoose validators)
 		const updatedTrip = await trip.save();
@@ -588,6 +635,7 @@ const getFeedTrips = async (req, res, next) => {
 					endLocationName: 1,
 					description: { $substrCP: ["$description", 0, 150] },
 					simplifiedRoute: 1,
+					defaultTravelMode: 1,
 					likesCount: { $size: "$likes" },
 					commentsCount: { $size: "$comments" },
 					createdAt: 1, // Include createdAt for sorting context if needed

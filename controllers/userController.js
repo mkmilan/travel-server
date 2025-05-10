@@ -113,6 +113,7 @@ const getUserProfileById = async (req, res, next) => {
 			followersCount: user.followers.length, // Existing count
 			followingCount: user.following.length, // Existing count
 			// followers: user.followers.map((id) => id.toString()),
+			settings: user.settings,
 			createdAt: user.createdAt,
 			totalDistance: Math.round(totalDistance), // Round distance to nearest meter
 			totalTrips: totalTrips,
