@@ -47,6 +47,7 @@ const registerUser = async (req, res, next) => {
 				bio: user.bio,
 				following: user.following,
 				followers: user.followers,
+				settings: user.settings,
 				token: token, // Send the token to the client
 				createdAt: user.createdAt,
 			});
@@ -92,6 +93,7 @@ const loginUser = async (req, res, next) => {
 				bio: user.bio,
 				following: user.following,
 				followers: user.followers,
+				settings: user.settings,
 				token: token,
 				createdAt: user.createdAt,
 				updatedAt: user.updatedAt,
@@ -123,6 +125,7 @@ const getMe = async (req, res, next) => {
 			bio: user.bio,
 			following: user.following,
 			followers: user.followers,
+			settings: user.settings,
 			createdAt: user.createdAt,
 			updatedAt: user.updatedAt,
 		});
