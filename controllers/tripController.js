@@ -218,42 +218,58 @@ const createTrip = async (req, res, next) => {
 /**
  * @desc    Get a single trip by its ID
  * @route   GET /api/trips/:tripId
- * @access  Public (for now, can add checks later if needed)
+ * @access  Public with protectOptional
  */
 const getTripById = async (req, res, next) => {
 	const { tripId } = req.params;
 
-	// Validate ObjectId format
 	if (!mongoose.Types.ObjectId.isValid(tripId)) {
 		res.status(400);
 		return next(new Error(`Invalid Trip ID format: ${tripId}`));
 	}
 
 	try {
-		// Find trip and populate user details (username, profile pic)
-		// Select fields needed for display
-		// Exclude the full GPX reference unless specifically needed here
 		const trip = await Trip.findById(tripId)
-			.select("-gpxFileRef") // Usually don't send GPX ref in main details
-			.populate("user", "username profilePictureUrl")
+			.select("-gpxFileRef")
+			.populate("user", "username profilePictureUrl followers")
 			.lean();
 
 		if (!trip) {
 			res.status(404);
 			return next(new Error(`Trip not found with ID: ${tripId}`));
 		}
-		// Optional: Populate photos if needed (or just send IDs for frontend to fetch)
-		const photoUrls = trip.photos.map((photoId) => `/api/photos/${photoId}`); // Example URL structure
 
-		// Create response object, replacing IDs with URLs if desired by frontend
-		const responseData = {
-			...trip,
-			// photos: photoUrls, // Option 1: Send URLs
-			photos: trip.photos, // Option 2: Send IDs (frontend builds URL) - Let's use this for now
-		};
+		// Since we're using protect middleware, req.user will always exist
+		const requestingUser = req.user;
+		const tripOwner = trip.user;
 
-		// res.status(200).json(trip);
-		res.status(200).json(responseData);
+		// First check: Is the requesting user the owner?
+		if (requestingUser._id.toString() === trip.user._id.toString()) {
+			return res.status(200).json(trip);
+		}
+
+		// If not owner, check visibility
+		if (trip.defaultTripVisibility === "public") {
+			return res.status(200).json(trip);
+		}
+
+		if (trip.defaultTripVisibility === "followers_only") {
+			// Check if user is a follower
+			const isFollower =
+				tripOwner.followers &&
+				tripOwner.followers.some(
+					(followerId) =>
+						followerId.toString() === requestingUser._id.toString()
+				);
+
+			if (isFollower) {
+				return res.status(200).json(trip);
+			}
+		}
+
+		// If we reach here, user doesn't have permission
+		res.status(403);
+		return next(new Error("You don't have permission to view this trip"));
 	} catch (error) {
 		console.error(`Error fetching trip ${tripId}:`, error);
 		next(error);
@@ -358,6 +374,7 @@ const getMyTrips = async (req, res, next) => {
 					description: { $substrCP: ["$description", 0, 150] }, // Get first 150 chars of description
 					simplifiedRoute: 1, // Include simplified route for mini-map
 					defaultTravelMode: 1,
+					defaultTripVisibility: 1,
 					likesCount: { $size: "$likes" }, // Calculate size of likes array
 					commentsCount: { $size: "$comments" }, // Calculate size of comments array
 					// Exclude large/unused fields explicitly if necessary (though $project includes only specified)
@@ -591,23 +608,47 @@ const getFeedTrips = async (req, res, next) => {
 			.select("following")
 			.lean();
 
-		if (
-			!currentUser ||
-			!currentUser.following ||
-			currentUser.following.length === 0
-		) {
-			// User is not following anyone, return empty feed
+		// if (
+		// 	!currentUser ||
+		// 	!currentUser.following ||
+		// 	currentUser.following.length === 0
+		// ) {
+		// 	// User is not following anyone, return empty feed
+		// 	return res.status(200).json([]);
+		// }
+
+		if (!currentUser?.following?.length) {
 			return res.status(200).json([]);
 		}
 
 		const followingIds = currentUser.following; // Array of ObjectIds
 
+		// First, let's check all trips from followed users
+		const allTrips = await Trip.find({
+			user: { $in: followingIds },
+		}).lean();
+
+		console.log(
+			"Debug - All trips from followed users:",
+			allTrips.map((t) => ({
+				tripId: t._id,
+				visibility: t.defaultTripVisibility,
+				userId: t.user,
+			}))
+		);
+
 		// 2. Find trips where the 'user' field is in the followingIds array
 		// Use aggregation to get counts and project needed fields, similar to getMyTrips
 		const feedTrips = await Trip.aggregate([
 			// Stage 1: Match trips from followed users
-			{ $match: { user: { $in: followingIds } } },
-			// Stage 2: Sort by creation date descending (most recent trips first)
+			{
+				$match: {
+					user: { $in: followingIds },
+					// Match trips that are either public OR followers_only
+					defaultTripVisibility: { $in: ["public", "followers_only"] },
+				},
+			},
+
 			{ $sort: { createdAt: -1 } },
 			// Optional: Skip and Limit for pagination
 			// { $skip: skip },
@@ -636,6 +677,7 @@ const getFeedTrips = async (req, res, next) => {
 					description: { $substrCP: ["$description", 0, 150] },
 					simplifiedRoute: 1,
 					defaultTravelMode: 1,
+					defaultTripVisibility: 1,
 					likesCount: { $size: "$likes" },
 					commentsCount: { $size: "$comments" },
 					createdAt: 1, // Include createdAt for sorting context if needed
@@ -649,6 +691,15 @@ const getFeedTrips = async (req, res, next) => {
 				},
 			},
 		]);
+		console.log(`Total feed trips found: ${feedTrips.length}`);
+		console.log(
+			"Trips visibility breakdown:",
+			feedTrips.map((t) => ({
+				tripId: t._id,
+				visibility: t.defaultTripVisibility,
+				userId: t.user._id,
+			}))
+		);
 
 		res.status(200).json(feedTrips);
 	} catch (error) {

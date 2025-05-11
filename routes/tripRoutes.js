@@ -20,7 +20,7 @@ const {
 	addPoiToTrip,
 	deleteCommentFromTrip,
 } = require("../controllers/tripController");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, protectOptional } = require("../middleware/authMiddleware");
 const {
 	getRecommendationsForTrip,
 } = require("../controllers/recommendationController");
@@ -53,6 +53,6 @@ router.get("/:tripId/likers", getTripLikers);
 router.route("/:tripId/recommendations").get(getRecommendationsForTrip);
 
 // --- General Document Route ---
-router.get("/:tripId", getTripById);
+router.get("/:tripId", protect, getTripById);
 
 module.exports = router;
