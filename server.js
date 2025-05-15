@@ -2,6 +2,7 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const connectDB = require("./config/db"); // Ensure path is correct
 
 // Load environment variables from .env file
@@ -39,6 +40,7 @@ app.use(
 
 // Enable JSON body parsing
 app.use(express.json({ limit: "10mb" }));
+app.use(cookieParser());
 // Optional: URL-encoded body parsing
 // app.use(express.urlencoded({ extended: false }));
 

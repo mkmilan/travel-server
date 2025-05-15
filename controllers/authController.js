@@ -2,6 +2,37 @@
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
 
+// Helper function to set the token cookie
+const sendTokenResponse = (user, statusCode, res) => {
+	const token = generateToken(user._id);
+
+	const options = {
+		expires: new Date(
+			Date.now() + process.env.JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000 // e.g., 30 days
+		),
+		httpOnly: true,
+		secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+		sameSite: "Lax", // Or 'Strict' depending on your needs
+		path: "/",
+	};
+
+	// Remove password from output
+	const userResponse = {
+		_id: user._id,
+		username: user.username,
+		email: user.email,
+		profilePictureUrl: user.profilePictureUrl,
+		bio: user.bio,
+		following: user.following,
+		followers: user.followers,
+		settings: user.settings,
+		createdAt: user.createdAt,
+		updatedAt: user.updatedAt, // Ensure updatedAt is included if needed
+	};
+
+	res.status(statusCode).cookie("token", token, options).json(userResponse);
+};
+
 // @desc    Register a new user
 // @route   POST /api/auth/register
 // @access  Public
@@ -33,24 +64,24 @@ const registerUser = async (req, res, next) => {
 		});
 
 		if (user) {
-			// Generate token
-			const token = generateToken(user._id);
+			sendTokenResponse(user, 201, res);
+			// // Generate token
+			// const token = generateToken(user._id);
 
-			// Respond with user data and token
-			// Don't send back the password!
-			res.status(201).json({
-				// 201 Created
-				_id: user._id,
-				username: user.username,
-				email: user.email,
-				profilePictureUrl: user.profilePictureUrl,
-				bio: user.bio,
-				following: user.following,
-				followers: user.followers,
-				settings: user.settings,
-				token: token, // Send the token to the client
-				createdAt: user.createdAt,
-			});
+			// // Don't send back the password!
+			// res.status(201).json({
+			// 	// 201 Created
+			// 	_id: user._id,
+			// 	username: user.username,
+			// 	email: user.email,
+			// 	profilePictureUrl: user.profilePictureUrl,
+			// 	bio: user.bio,
+			// 	following: user.following,
+			// 	followers: user.followers,
+			// 	settings: user.settings,
+			// 	token: token, // Send the token to the client
+			// 	createdAt: user.createdAt,
+			// });
 		} else {
 			res.status(400); // Bad Request
 			return next(new Error("Invalid user data"));
@@ -83,21 +114,22 @@ const loginUser = async (req, res, next) => {
 
 		// Check if user exists AND password matches
 		if (user && (await user.matchPassword(password))) {
-			const token = generateToken(user._id);
+			sendTokenResponse(user, 200, res);
+			// const token = generateToken(user._id);
 
-			res.status(200).json({
-				_id: user._id,
-				username: user.username,
-				email: user.email,
-				profilePictureUrl: user.profilePictureUrl,
-				bio: user.bio,
-				following: user.following,
-				followers: user.followers,
-				settings: user.settings,
-				token: token,
-				createdAt: user.createdAt,
-				updatedAt: user.updatedAt,
-			});
+			// res.status(200).json({
+			// 	_id: user._id,
+			// 	username: user.username,
+			// 	email: user.email,
+			// 	profilePictureUrl: user.profilePictureUrl,
+			// 	bio: user.bio,
+			// 	following: user.following,
+			// 	followers: user.followers,
+			// 	settings: user.settings,
+			// 	token: token,
+			// 	createdAt: user.createdAt,
+			// 	updatedAt: user.updatedAt,
+			// });
 		} else {
 			// Authentication failed (user not found or password incorrect)
 			res.status(401); // Unauthorized
@@ -109,6 +141,17 @@ const loginUser = async (req, res, next) => {
 		res.status(500);
 		return next(new Error("An error occurred during login. Please try again."));
 	}
+};
+
+const logoutUser = (req, res, next) => {
+	res.cookie("token", "none", {
+		expires: new Date(Date.now() + 10 * 1000), // Expire in 10 seconds
+		httpOnly: true,
+		secure: process.env.NODE_ENV === "production",
+		sameSite: "Lax",
+		path: "/",
+	});
+	res.status(200).json({ success: true, data: {} });
 };
 
 const getMe = async (req, res, next) => {
@@ -142,5 +185,6 @@ const getMe = async (req, res, next) => {
 module.exports = {
 	registerUser,
 	loginUser,
+	logoutUser,
 	getMe,
 };
