@@ -16,6 +16,10 @@ require("./services/storageService"); // Ensure path is correct
 
 // --- Create Express App ---
 const app = express();
+// --- Trust Proxy ---
+// If your app is behind a proxy (like on Render), this helps Express correctly determine protocol (http/https)
+// and is important for 'Secure' cookies to work.
+app.set("trust proxy", 1); // Trust first proxy
 
 const allowedOrigins = [
 	"http://localhost:3000",
@@ -66,7 +70,18 @@ app.use(cookieParser());
 
 // CSRF Protection Setup
 // Option 1: Store secret in cookie (double submit cookie pattern)
-const csrfProtection = csrf({ cookie: true });
+// const csrfProtection = csrf({ cookie: true });
+// CSRF Protection Setup
+const csrfProtection = csrf({
+	cookie: {
+		key: "_csrf", // Default key name, can be omitted
+		path: "/",
+		httpOnly: true,
+		secure: process.env.NODE_ENV === "production", // Ensure 'Secure' in production
+		sameSite: process.env.NODE_ENV === "production" ? "None" : "Lax", // 'None' for cross-site, 'Lax' for same-site
+		// domain: process.env.NODE_ENV === "production" ? "your-render-app-domain.onrender.com" : undefined, // Usually not needed if cookie is host-only
+	},
+});
 // Option 2: Store secret in session (if you were using express-session)
 // const csrfProtection = csrf(); // Requires session middleware
 
@@ -124,10 +139,37 @@ const errorHandler = (err, req, res, next) => {
 	});
 };
 // Error handling for CSRF
+// app.use((err, req, res, next) => {
+// 	if (err.code === "EBADCSRFTOKEN") {
+// 		console.error("CSRF token error:", err);
+// 		res.status(403).json({ message: "Invalid CSRF token" });
+// 	} else {
+// 		next(err);
+// 	}
+// });
+// Error handling for CSRF
 app.use((err, req, res, next) => {
 	if (err.code === "EBADCSRFTOKEN") {
-		console.error("CSRF token error:", err);
-		res.status(403).json({ message: "Invalid CSRF token" });
+		console.error("CSRF token error details:", {
+			// Enhanced logging
+			message: err.message,
+			code: err.code,
+			url: req.originalUrl,
+			method: req.method,
+			origin: req.headers.origin,
+			referer: req.headers.referer,
+			cookiesSent: req.cookies, // Cookies received by server
+			csrfTokenInHeader:
+				req.headers["x-csrf-token"] ||
+				req.headers["xsrf-token"] ||
+				req.headers["x-xsrf-token"],
+			bodyCsrfToken: req.body && req.body._csrf, // If sent in body
+		});
+		res
+			.status(403)
+			.json({
+				message: "Invalid CSRF token. Please refresh the page and try again.",
+			});
 	} else {
 		next(err);
 	}
