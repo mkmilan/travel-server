@@ -1,13 +1,9 @@
 // server/server.js
 const express = require("express");
-const dotenv = require("dotenv");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+require("dotenv").config();
 const connectDB = require("./config/db"); // Ensure path is correct
-
-// Load environment variables from .env file
-// Make sure this runs before any code that needs process.env
-dotenv.config();
 
 // --- Database Connection ---
 // Establish connection early
@@ -19,24 +15,57 @@ require("./services/storageService"); // Ensure path is correct
 
 // --- Create Express App ---
 const app = express();
-const isProduction = process.env.NODE_ENV === "production";
-const allowedOrigin = isProduction
-	? process.env.FRONTEND_URL // Use FRONTEND_URL from Render env vars in production
-	: "http://localhost:3000"; // Default to localhost for development
 
-console.log(
-	`CORS Allowed Origin: ${allowedOrigin} (NODE_ENV: ${process.env.NODE_ENV})`
-);
-console.log("isProduction", isProduction);
+// console.log("Environment Variables:", {
+// 	NODE_ENV: process.env.NODE_ENV,
+// 	FRONTEND_URL: process.env.FRONTEND_URL,
+// 	PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
+// 	PORT: process.env.PORT,
+// 	DEV_API_URL: process.env.DEV_API_URL,
+// });
 
+const allowedOrigins = [
+	"http://localhost:3000",
+	"https://travel-client-tau.vercel.app",
+	process.env.FRONTEND_URL,
+	process.env.PUBLIC_SITE_URL,
+].filter(Boolean); // Remove any undefined values
+
+// console.log("Allowed Origins:", allowedOrigins);
+
+// CORS Configuration
+const corsOptions = {
+	origin: function (origin, callback) {
+		// console.log("Request Origin:", origin);
+
+		// Allow requests with no origin (like mobile apps or curl requests)
+		if (!origin) return callback(null, true);
+
+		// Normalize and check origin
+		// Ensure allowedOrigin doesn't have a trailing slash for startsWith comparison
+		const isAllowed = allowedOrigins.some((allowedOrigin) => {
+			const normalizedAllowedOrigin = allowedOrigin.replace(/\/$/, ""); // Remove trailing slash if any
+			return origin.startsWith(normalizedAllowedOrigin);
+		});
+
+		if (isAllowed) {
+			callback(null, true);
+		} else {
+			console.log("Origin blocked by CORS:", origin);
+			callback(new Error("Not allowed by CORS"));
+		}
+	},
+	credentials: true,
+	methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+	allowedHeaders: ["Content-Type", "Authorization"],
+	exposedHeaders: ["Set-Cookie"],
+	optionsSuccessStatus: 200,
+};
 // --- Core Middleware ---
 // Enable CORS - Configure origins as needed for production
-app.use(
-	cors({
-		origin: allowedOrigin,
-		credentials: true, // Allow cookies/auth headers if needed
-	})
-);
+app.use(cors(corsOptions));
+// Enable pre-flight requests for all routes
+// app.options("*", cors(corsOptions));
 
 // Enable JSON body parsing
 app.use(express.json({ limit: "10mb" }));
@@ -61,11 +90,31 @@ app.use("/api/suggestions", require("./routes/suggestionRoutes"));
 
 // --- Custom Error Handling Middleware ---
 const errorHandler = (err, req, res, next) => {
-	console.error("Global Error Handler Caught:", err.stack);
+	console.error("Global Error Handler Caught:", {
+		error: err.message,
+		// stack: err.stack,
+		url: req.url,
+		method: req.method,
+		// headers: req.headers,
+		origin: req.headers.origin,
+	});
+	if (process.env.NODE_ENV === "development") {
+		console.error(err.stack);
+	}
 	const statusCode = err.statusCode || 500;
+	// Specific check for CORS errors passed from the cors middleware
+	if (err.message === "Not allowed by CORS" && !res.headersSent) {
+		return res.status(403).json({
+			// 403 Forbidden is more appropriate for CORS denial
+			success: false,
+			message: err.message,
+		});
+	}
+
 	res.status(statusCode).json({
+		success: false,
 		message: err.message || "Internal Server Error",
-		stack: isProduction ? undefined : err.stack, // Show stack only in dev
+		stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
 	});
 };
 app.use(errorHandler);

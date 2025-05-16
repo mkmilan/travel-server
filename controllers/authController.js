@@ -1,21 +1,30 @@
 // server/controllers/authController.js
 const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
+dotenv = require("dotenv");
+dotenv.config();
 
 // Helper function to set the token cookie
 const sendTokenResponse = (user, statusCode, res) => {
 	const token = generateToken(user._id);
 
-	const options = {
+	const cookieOptions = {
 		expires: new Date(
 			Date.now() + process.env.JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000 // e.g., 30 days
 		),
 		httpOnly: true,
-		secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
-		sameSite: "Lax", // Or 'Strict' depending on your needs
+		secure: process.env.NODE_ENV === "production", // true in production
+		sameSite: process.env.NODE_ENV === "production" ? "None" : "Lax", // Important for cross-domain
 		path: "/",
+		// domain:
+		// 	process.env.NODE_ENV === "production"
+		// 		? ".onrender.com" // Adjust if your backend domain is different
+		// 		: "localhost",
 	};
-
+	// Only set domain for localhost. For production, let the browser default it.
+	if (process.env.NODE_ENV !== "production") {
+		cookieOptions.domain = "localhost";
+	}
 	// Remove password from output
 	const userResponse = {
 		_id: user._id,
@@ -30,7 +39,10 @@ const sendTokenResponse = (user, statusCode, res) => {
 		updatedAt: user.updatedAt, // Ensure updatedAt is included if needed
 	};
 
-	res.status(statusCode).cookie("token", token, options).json(userResponse);
+	res
+		.status(statusCode)
+		.cookie("token", token, cookieOptions)
+		.json(userResponse);
 };
 
 // @desc    Register a new user
@@ -144,13 +156,18 @@ const loginUser = async (req, res, next) => {
 };
 
 const logoutUser = (req, res, next) => {
-	res.cookie("token", "none", {
+	const cookieOptions = {
 		expires: new Date(Date.now() + 10 * 1000), // Expire in 10 seconds
 		httpOnly: true,
 		secure: process.env.NODE_ENV === "production",
-		sameSite: "Lax",
+		sameSite: process.env.NODE_ENV === "production" ? "None" : "Lax", // Match sendTokenResponse
 		path: "/",
-	});
+	};
+	// Only set domain for localhost. For production, let the browser default it.
+	if (process.env.NODE_ENV !== "production") {
+		cookieOptions.domain = "localhost";
+	}
+	res.cookie("token", "none", cookieOptions);
 	res.status(200).json({ success: true, data: {} });
 };
 
