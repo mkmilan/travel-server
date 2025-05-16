@@ -2,6 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const csrf = require("csurf");
 require("dotenv").config();
 const connectDB = require("./config/db"); // Ensure path is correct
 
@@ -15,14 +16,6 @@ require("./services/storageService"); // Ensure path is correct
 
 // --- Create Express App ---
 const app = express();
-
-// console.log("Environment Variables:", {
-// 	NODE_ENV: process.env.NODE_ENV,
-// 	FRONTEND_URL: process.env.FRONTEND_URL,
-// 	PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
-// 	PORT: process.env.PORT,
-// 	DEV_API_URL: process.env.DEV_API_URL,
-// });
 
 const allowedOrigins = [
 	"http://localhost:3000",
@@ -57,7 +50,7 @@ const corsOptions = {
 	},
 	credentials: true,
 	methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-	allowedHeaders: ["Content-Type", "Authorization"],
+	allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
 	exposedHeaders: ["Set-Cookie"],
 	optionsSuccessStatus: 200,
 };
@@ -70,8 +63,21 @@ app.use(cors(corsOptions));
 // Enable JSON body parsing
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
-// Optional: URL-encoded body parsing
-// app.use(express.urlencoded({ extended: false }));
+
+// CSRF Protection Setup
+// Option 1: Store secret in cookie (double submit cookie pattern)
+const csrfProtection = csrf({ cookie: true });
+// Option 2: Store secret in session (if you were using express-session)
+// const csrfProtection = csrf(); // Requires session middleware
+
+app.use(csrfProtection);
+
+// Middleware to make CSRF token available to your routes/frontend
+// For APIs, you might send it on a specific endpoint or on initial page load.
+// For SPAs, often a dedicated endpoint is used to fetch the token.
+app.get("/api/csrf-token", (req, res) => {
+	res.json({ csrfToken: req.csrfToken() });
+});
 
 // --- API Routes ---
 // Define a simple root route for health check/API status
@@ -117,6 +123,15 @@ const errorHandler = (err, req, res, next) => {
 		stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
 	});
 };
+// Error handling for CSRF
+app.use((err, req, res, next) => {
+	if (err.code === "EBADCSRFTOKEN") {
+		console.error("CSRF token error:", err);
+		res.status(403).json({ message: "Invalid CSRF token" });
+	} else {
+		next(err);
+	}
+});
 app.use(errorHandler);
 
 // --- Start Server ---
