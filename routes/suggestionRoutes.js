@@ -1,6 +1,6 @@
 const express = require("express");
 const { submitSuggestion } = require("../controllers/suggestionController");
-const { protectOptional, protected } = require("../middleware/authMiddleware"); // Use protectOptional if guests can submit
+const { protectOptional } = require("../middleware/authMiddleware"); // Use protectOptional if guests can submit
 
 const router = express.Router();
 

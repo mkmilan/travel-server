@@ -3,7 +3,7 @@ const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
 const sendEmail = require("../utils/sendEmail");
 const crypto = require("crypto");
-dotenv = require("dotenv");
+const dotenv = require("dotenv");
 dotenv.config();
 
 // Helper function to set the token cookie
@@ -85,7 +85,9 @@ const registerUser = async (req, res, next) => {
 			.createHash("sha256")
 			.update(verificationToken)
 			.digest("hex");
-		user.emailVerificationExpires = Date.now() + 1440 * 60 * 1000; // Token expires in 24 hours
+		user.emailVerificationExpires =
+			Date.now() +
+			process.env.EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES * 60 * 1000; // Token expires in 24 hours
 
 		await user.save({ validateBeforeSave: false });
 
@@ -228,7 +230,8 @@ const forgotPassword = async (req, res, next) => {
 			.digest("hex");
 
 		// Set token expire time (e.g., 10 minutes)
-		user.passwordResetExpires = Date.now() + 10 * 60 * 1000;
+		user.passwordResetExpires =
+			Date.now() + process.env.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES * 60 * 1000;
 
 		await user.save({ validateBeforeSave: false });
 
