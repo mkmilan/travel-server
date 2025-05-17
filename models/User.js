@@ -29,6 +29,28 @@ const userSchema = new mongoose.Schema(
 			minlength: [6, "Password must be at least 6 characters long"],
 			select: false, // Password field won't be returned in queries by default
 		},
+		isEmailVerified: {
+			type: Boolean,
+			default: false,
+		},
+		emailVerificationToken: {
+			type: String,
+			select: false,
+		},
+		emailVerificationExpires: {
+			type: Date,
+			select: false,
+		},
+		passwordResetToken: {
+			// New field
+			type: String,
+			select: false,
+		},
+		passwordResetExpires: {
+			// New field
+			type: Date,
+			select: false,
+		},
 		profilePictureUrl: {
 			type: String,
 			default: "", // Or path to a default avatar
