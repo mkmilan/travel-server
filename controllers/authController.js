@@ -232,10 +232,15 @@ const forgotPassword = async (req, res, next) => {
 
 		await user.save({ validateBeforeSave: false });
 
-		// Create reset URL (adjust CLIENT_URL as needed)
-		// This URL will point to your frontend page for password reset
+		// Determine Client URL based on environment
+		const clientBaseUrl =
+			process.env.NODE_ENV === "production"
+				? process.env.PUBLIC_SITE_URL
+				: process.env.FRONTEND_URL;
+
+		// Create reset URL
 		const resetUrl = `${
-			process.env.CLIENT_URL || "http://localhost:3000"
+			clientBaseUrl || "http://localhost:3000" // Fallback if somehow undefined
 		}/reset-password/${resetToken}`;
 
 		const message = `

@@ -39,12 +39,27 @@ const sendEmail = async (options) => {
 	};
 
 	try {
-		await transporter.sendMail(mailOptions);
-		console.log("Email sent successfully");
+		console.log("Attempting to send email via provider with options:", {
+			from: mailOptions.from,
+			to: mailOptions.to,
+			subject: mailOptions.subject,
+		});
+		const info = await transporter.sendMail(mailOptions);
+		console.log(
+			"Email sent successfully via provider. Message ID:",
+			info.messageId
+		);
+		// You can also log info.response for more details from the SMTP server
+		// console.log("SMTP Response:", info.response);
+		return { success: true }; // Indicate success
 	} catch (error) {
-		console.error("Error sending email:", error);
-		// Depending on your error handling strategy, you might want to throw this error
-		// or handle it gracefully. For now, we'll log it.
+		console.error(
+			"Error sending email via provider (sendEmail utility):",
+			error
+		);
+		// Log the full error object for more details
+		// console.error("Full error object:", JSON.stringify(error, null, 2));
+		throw error; // IMPORTANT: Re-throw the error
 	}
 };
 
