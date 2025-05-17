@@ -88,9 +88,15 @@ const registerUser = async (req, res, next) => {
 		user.emailVerificationExpires = Date.now() + 1440 * 60 * 1000; // Token expires in 24 hours
 
 		await user.save({ validateBeforeSave: false });
+
+		// Determine Client URL based on environment
+		const clientBaseUrl =
+			process.env.NODE_ENV === "production"
+				? process.env.PUBLIC_SITE_URL
+				: process.env.FRONTEND_URL;
 		// Construct verification URL (adjust CLIENT_URL as needed)
 		const verificationUrl = `${
-			process.env.CLIENT_URL || "http://localhost:3000"
+			clientBaseUrl || "http://localhost:3000"
 		}/verify-email/${verificationToken}`;
 		console.log("Verification URL created:", verificationUrl);
 		const message = `
