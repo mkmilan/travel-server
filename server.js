@@ -24,8 +24,13 @@ app.set("trust proxy", 1); // Trust first proxy
 const allowedOrigins = [
 	"http://localhost:3000",
 	"https://travel-client-tau.vercel.app",
+	"http://localhost:8081", // Expo web dev
+	"http://192.168.1.193:8081", // direct IP web dev
+	"http://localhost:19006", // another Expo web port
+	"exp://192.168.1.193:19006", // Expo Go (optional)
 	process.env.FRONTEND_URL,
 	process.env.PUBLIC_SITE_URL,
+	process.env.EXPO_URL,
 ].filter(Boolean); // Remove any undefined values
 
 // console.log("Allowed Origins:", allowedOrigins);
@@ -74,12 +79,13 @@ app.use(cookieParser());
 // CSRF Protection Setup
 const csrfProtection = csrf({
 	cookie: {
-		key: "_csrf", // Default key name, can be omitted
+		key: "_csrf",
 		path: "/",
 		httpOnly: true,
 		secure: process.env.NODE_ENV === "production", // Ensure 'Secure' in production
-		sameSite: process.env.NODE_ENV === "production" ? "None" : "Lax", // 'None' for cross-site, 'Lax' for same-site
-		// domain: process.env.NODE_ENV === "production" ? "your-render-app-domain.onrender.com" : undefined, // Usually not needed if cookie is host-only
+		sameSite: process.env.NODE_ENV === "production" ? "None" : "Lax", // 'None' for cross-site, 'Lax' for same-site /none for mobile
+		// secure: true,
+		// sameSite: "None",
 	},
 });
 // Option 2: Store secret in session (if you were using express-session)
@@ -108,6 +114,7 @@ app.use("/api/photos", require("./routes/photoRoutes"));
 app.use("/api/recommendations", require("./routes/recommendationRoutes"));
 app.use("/api/search", require("./routes/searchRoutes"));
 app.use("/api/suggestions", require("./routes/suggestionRoutes"));
+app.use("/api/v2/trips", require("./routes/tripJsonRoutes")); // New route for JSON trips
 
 // --- Custom Error Handling Middleware ---
 const errorHandler = (err, req, res, next) => {
@@ -165,11 +172,9 @@ app.use((err, req, res, next) => {
 				req.headers["x-xsrf-token"],
 			bodyCsrfToken: req.body && req.body._csrf, // If sent in body
 		});
-		res
-			.status(403)
-			.json({
-				message: "Invalid CSRF token. Please refresh the page and try again.",
-			});
+		res.status(403).json({
+			message: "Invalid CSRF token. Please refresh the page and try again.",
+		});
 	} else {
 		next(err);
 	}

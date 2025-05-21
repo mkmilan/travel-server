@@ -7,7 +7,7 @@ const userSchema = new mongoose.Schema(
 		username: {
 			type: String,
 			required: [true, "Username is required"],
-			unique: true,
+			// unique: true,
 			trim: true, // Removes whitespace from start/end
 			minlength: [3, "Username must be at least 3 characters long"],
 		},
@@ -110,6 +110,12 @@ const userSchema = new mongoose.Schema(
 				type: String,
 				enum: ["12h", "24h"],
 				default: "24h",
+			},
+			language: {
+				// New language setting
+				type: String,
+				enum: ["en", "fr", "es", "de", "it"],
+				default: "en",
 			},
 		},
 		// MongoDB automatically adds createdAt and updatedAt if timestamps: true

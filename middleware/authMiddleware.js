@@ -4,16 +4,14 @@ const User = require("../models/User");
 
 const protect = async (req, res, next) => {
 	let token;
-
-	// // Check if the Authorization header exists and starts with 'Bearer'
-	// if (
-	// 	req.headers.authorization &&
-	// 	req.headers.authorization.startsWith("Bearer")
-	// )
-	// {
-	// Check for token in cookies first
+	console.log("protect middleware called");
+	// for web app
 	if (req.cookies && req.cookies.token) {
 		token = req.cookies.token;
+	}
+	/*  Fallback to Authorization header (mobile) */
+	if (!token && req.headers.authorization?.startsWith("Bearer ")) {
+		token = req.headers.authorization.split(" ")[1];
 	}
 	if (!token) {
 		res.status(401);
@@ -65,11 +63,10 @@ const protectOptional = async (req, res, next) => {
 	if (req.cookies && req.cookies.token) {
 		token = req.cookies.token;
 	}
-
-	// if (
-	// 	req.headers.authorization &&
-	// 	req.headers.authorization.startsWith("Bearer")
-	// )
+	// Fallback to Authorization header (mobile)
+	if (!token && req.headers.authorization?.startsWith("Bearer ")) {
+		token = req.headers.authorization.split(" ")[1];
+	}
 	if (token) {
 		try {
 			// token = req.headers.authorization.split(" ")[1];

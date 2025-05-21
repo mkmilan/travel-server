@@ -60,6 +60,11 @@ const poiSchema = new mongoose.Schema(
 // --- Trip Schema ---
 const tripSchema = new mongoose.Schema(
 	{
+		format: {
+			type: String,
+			enum: ["gpx", "json"],
+			default: "gpx",
+		},
 		user: {
 			// User who created the trip
 			type: mongoose.Schema.Types.ObjectId,
@@ -80,6 +85,7 @@ const tripSchema = new mongoose.Schema(
 			maxlength: [2000, "Description cannot exceed 2000 characters"],
 			default: "",
 		},
+
 		defaultTripVisibility: {
 			type: String,
 			enum: ["public", "followers_only", "private"],
@@ -113,27 +119,25 @@ const tripSchema = new mongoose.Schema(
 		startDate: {
 			// Extracted from GPX or set by user
 			type: Date,
-			required: true,
+			required: function () {
+				return this.format === "gpx";
+			},
 		},
 		endDate: {
 			// Extracted from GPX or set by user
 			type: Date,
-			required: true,
+			required: function () {
+				return this.format === "gpx";
+			},
 		},
-		durationMillis: {
-			// Calculated from GPX timestamps
-			type: Number,
-			required: true,
-		},
-		distanceMeters: {
-			// Calculated from GPX points
-			type: Number,
-			required: true,
-		},
+		durationMillis: { type: Number, required: true },
+		distanceMeters: { type: Number, required: true },
 		gpxFileRef: {
 			// Reference ID/Key/URL to the stored GPX file (GridFS ID initially)
 			type: String, // Using String to accommodate GridFS ObjectId or potentially S3 Keys/URLs later
-			required: true,
+			required: function () {
+				return this.format === "gpx";
+			},
 		},
 		pointsOfInterest: [poiSchema],
 		// Optional: For quicker map centering/initial zoom
@@ -168,7 +172,23 @@ const tripSchema = new mongoose.Schema(
 			},
 		],
 		comments: [commentSchema], // Array of comment subdocuments
+		segments: [
+			{
+				startTime: Date,
+				endTime: Date,
+				track: [
+					{
+						lat: Number,
+						lon: Number,
+						t: String,
+						spd: Number,
+						acc: Number,
+					},
+				],
+			},
+		],
 	},
+
 	{
 		timestamps: true, // Adds createdAt and updatedAt for the Trip itself
 	}

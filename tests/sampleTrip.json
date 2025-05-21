@@ -1,0 +1,27 @@
+{
+  "startTime": "2025-05-22T08:00:00Z",
+  "segments": [
+    {
+      "startTime": "2025-05-22T08:00:00Z",
+      "endTime": "2025-05-22T08:05:00Z",
+      "track": [
+        {
+          "lat": 45.0,
+          "lon": 14.0,
+          "t": 0,
+          "spd": 0,
+          "acc": 5
+        },
+        {
+          "lat": 45.1,
+          "lon": 14.1,
+          "t": 300,
+          "spd": 50,
+          "acc": 5
+        }
+      ]
+    }
+  ],
+  "pois": [],
+  "recommendations": []
+}
