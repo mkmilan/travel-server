@@ -1,76 +1,125 @@
 const turf = require("@turf/turf");
 const Trip = require("../models/Trip");
+// const Recommendation = require("../models/Recommendation"); // No longer directly used here for creation
+const mongoose = require("mongoose");
+const {
+	processPendingRecommendations,
+} = require("./recommendationJsonController"); // Import the new function
 
 /* POST  /api/v2/trips/json   (protected) */
 exports.createTripJson = async (req, res, next) => {
 	try {
 		const userId = req.user._id;
+		const userSettings = req.user.settings || {};
 		const {
-			tripId,
+			title: requestTitle,
+			description,
+			startLocationName,
+			endLocationName,
 			startTime,
 			segments = [],
 			pois = [],
-			recommendations = [],
+			recommendations: pendingRecommendationsPayload = [], // Renamed to avoid conflict
+			defaultTripVisibility: requestDefaultTripVisibility,
+			defaultTravelMode: requestDefaultTravelMode,
 		} = req.body;
 
-		if (!startTime || !segments.length)
+		if (!startTime || !segments.length) {
 			return res
 				.status(400)
 				.json({ message: "startTime & segments are required" });
+		}
 
-		/* ─── flatten all track points ─── */
 		const allPts = segments.flatMap((s) => s.track);
-		if (allPts.length < 2)
-			return res.status(400).json({ message: "not enough track points" });
+		if (allPts.length < 2) {
+			return res.status(400).json({ message: "Not enough track points" });
+		}
 
-		/* geo calculations */
 		const line = turf.lineString(allPts.map((p) => [p.lon, p.lat]));
 		const distanceMeters = turf.length(line, { units: "meters" });
 		const startDate = new Date(startTime);
 		const endDate = new Date(
 			segments[segments.length - 1].endTime || allPts[allPts.length - 1].t
 		);
-		const durationMillis = endDate - startDate;
+		const durationMillis = endDate.getTime() - startDate.getTime();
 		const simplified = turf.simplify(line, {
 			tolerance: 0.0001,
 			highQuality: true,
 		});
 
-		/* map POIs coming from mobile */
 		const pointsOfInterest = (pois || []).map((p) => ({
 			lat: p.lat,
 			lon: p.lon,
-			timestamp: p.timestamp || new Date(),
+			timestamp: p.timestamp ? new Date(p.timestamp) : new Date(),
 			name: p.name || null,
 			description: p.note || null,
 		}));
 
-		const newTrip = await Trip.create({
+		const newTripData = {
 			format: "json",
 			user: userId,
-			title: `Trip on ${startDate.toLocaleDateString()}`,
+			title: requestTitle || `Trip on ${startDate.toLocaleDateString()}`,
+			description: description || "",
+			startLocationName: startLocationName || null,
+			endLocationName: endLocationName || null,
 			startDate,
 			endDate,
 			durationMillis,
 			distanceMeters,
 			segments,
 			pointsOfInterest,
-			recommendations,
 			simplifiedRoute: {
 				type: "LineString",
 				coordinates: simplified.geometry.coordinates,
 			},
-			defaultTripVisibility: req.user.settings?.defaultTripVisibility,
-			defaultTravelMode: req.user.settings?.defaultTravelMode,
+			defaultTripVisibility:
+				requestDefaultTripVisibility ||
+				userSettings.defaultTripVisibility ||
+				Trip.schema.path("defaultTripVisibility").defaultValue,
+			defaultTravelMode:
+				requestDefaultTravelMode ||
+				userSettings.defaultTravelMode ||
+				Trip.schema.path("defaultTravelMode").defaultValue,
 			mapCenter: { lat: allPts[0].lat, lon: allPts[0].lon },
+		};
+
+		const savedTrip = await Trip.create(newTripData);
+
+		// --- Process Pending Recommendations using the new controller function ---
+		let recommendationsOutcome = [];
+		if (savedTrip && savedTrip._id) {
+			console.log(
+				`Processing ${pendingRecommendationsPayload.length} pending recommendations for trip ${savedTrip._id} using recommendationJsonController...`
+			);
+			recommendationsOutcome = await processPendingRecommendations(
+				pendingRecommendationsPayload,
+				userId,
+				savedTrip._id
+			);
+			console.log(
+				`Finished processing recommendations for trip ${savedTrip._id}. ${
+					recommendationsOutcome.filter((r) => r.status === "created").length
+				} created.`
+			);
+		}
+		// --- End Recommendation Processing ---
+
+		const populatedTrip = await Trip.findById(savedTrip._id)
+			.populate("user", "username profilePictureUrl")
+			.lean();
+
+		res.status(201).json({
+			trip: populatedTrip,
+			recommendationsOutcome: recommendationsOutcome,
 		});
-		console.log("newTrip", newTrip);
-		res.status(201).json(newTrip);
 	} catch (err) {
 		console.error("createTripJson error:", err);
-		next(err);
+		if (!res.headersSent) {
+			next(err);
+		}
 	}
 };
+
 exports.getTripJsonById = async (req, res, next) => {
 	const { tripId } = req.params;
 
@@ -90,9 +139,11 @@ exports.getTripJsonById = async (req, res, next) => {
 		}
 
 		const isOwner = req.user?._id?.toString() === trip.user._id.toString();
-		const isFollower = trip.user.followers?.some(
-			(f) => f.toString() === req.user?._id?.toString()
-		);
+		const isFollower =
+			req.user?._id &&
+			trip.user.followers?.some(
+				(f) => f.toString() === req.user._id.toString()
+			);
 
 		if (
 			trip.defaultTripVisibility === "public" ||
@@ -102,7 +153,13 @@ exports.getTripJsonById = async (req, res, next) => {
 			return res.status(200).json(trip);
 		}
 
-		res
+		if (!req.user) {
+			return res
+				.status(401)
+				.json({ message: "Authentication required to view this trip" });
+		}
+
+		return res
 			.status(403)
 			.json({ message: "You don't have permission to view this trip" });
 	} catch (error) {
@@ -127,8 +184,10 @@ exports.getMyJsonTrips = async (req, res, next) => {
 					defaultTravelMode: 1,
 					defaultTripVisibility: 1,
 					simplifiedRoute: 1,
-					likesCount: { $size: "$likes" },
-					commentsCount: { $size: "$comments" },
+					distanceMeters: 1,
+					durationMillis: 1,
+					likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
+					commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
 					createdAt: 1,
 				},
 			},
