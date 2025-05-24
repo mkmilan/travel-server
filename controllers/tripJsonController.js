@@ -1,11 +1,12 @@
 const turf = require("@turf/turf");
 const Trip = require("../models/Trip");
 const User = require("../models/User");
-// const Recommendation = require("../models/Recommendation"); // No longer directly used here for creation
+const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const {
 	processPendingRecommendations,
 } = require("./recommendationJsonController"); // Import the new function
+const { json } = require("express");
 
 /* POST  /api/v2/trips/json   (protected) */
 exports.createTripJson = async (req, res, next) => {
@@ -131,7 +132,7 @@ exports.getTripJsonById = async (req, res, next) => {
 	try {
 		const trip = await Trip.findById(tripId)
 			.populate("user", "username profilePictureUrl followers")
-			.lean();
+			.lean(); // Keep .lean() for the main trip object
 
 		if (!trip || trip.format !== "json") {
 			return res
@@ -151,7 +152,20 @@ exports.getTripJsonById = async (req, res, next) => {
 			isOwner ||
 			(trip.defaultTripVisibility === "followers_only" && isFollower)
 		) {
-			return res.status(200).json(trip);
+			// Fetch associated recommendations
+			const recommendations = await Recommendation.find({
+				associatedTrip: tripId,
+			})
+				.populate("user", "username profilePictureUrl") // Populate user details for recommendations
+				.lean(); // Use .lean() for recommendations as well
+
+			// Add recommendations to the trip object
+			const tripWithRecommendations = { ...trip, recommendations };
+
+			console.log(
+				`Returning trip ${tripId} with ${recommendations.length} recommendations.`
+			);
+			return res.status(200).json(tripWithRecommendations);
 		}
 
 		if (!req.user) {
