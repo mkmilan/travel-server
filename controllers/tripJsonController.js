@@ -1,5 +1,6 @@
 const turf = require("@turf/turf");
 const Trip = require("../models/Trip");
+const User = require("../models/User");
 // const Recommendation = require("../models/Recommendation"); // No longer directly used here for creation
 const mongoose = require("mongoose");
 const {
@@ -196,6 +197,86 @@ exports.getMyJsonTrips = async (req, res, next) => {
 		res.status(200).json(trips);
 	} catch (error) {
 		console.error("getMyJsonTrips error:", error);
+		next(error);
+	}
+};
+
+/* GET /api/v2/trips/json/feed (protected) */
+exports.getFollowingTripsFeedJson = async (req, res, next) => {
+	const userId = req.user._id;
+
+	try {
+		// 1. Get the list of users the current user is following
+		const currentUser = await User.findById(userId).select("following").lean();
+		if (
+			!currentUser ||
+			!currentUser.following ||
+			currentUser.following.length === 0
+		) {
+			return res.status(200).json([]); // No one followed, return empty feed
+		}
+		const followedUserIds = currentUser.following;
+
+		// 2. Fetch trips from followed users
+		const feedTrips = await Trip.aggregate([
+			{
+				$match: {
+					user: { $in: followedUserIds }, // Trips from users I follow
+					format: "json",
+					$or: [
+						{ defaultTripVisibility: "public" },
+						{ defaultTripVisibility: "followers_only" },
+					],
+				},
+			},
+			{ $sort: { startDate: -1 } }, // Show newest trips first
+			{
+				$lookup: {
+					// Populate user details for each trip
+					from: "users", // The collection name for Users
+					localField: "user",
+					foreignField: "_id",
+					as: "userDetails",
+				},
+			},
+			{
+				$unwind: {
+					// Unwind the userDetails array (should be only one user per trip)
+					path: "$userDetails",
+					preserveNullAndEmptyArrays: true, // Keep trip even if user somehow not found
+				},
+			},
+			{
+				$project: {
+					// Select and shape the data for the feed
+					_id: 1,
+					title: 1,
+					startDate: 1,
+					description: { $substrCP: ["$description", 0, 150] }, // Snippet
+					defaultTravelMode: 1,
+					defaultTripVisibility: 1,
+					simplifiedRoute: 1, // For map preview
+					distanceMeters: 1,
+					durationMillis: 1,
+					likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
+					commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
+					createdAt: 1,
+					user: {
+						// Include selected user details
+						_id: "$userDetails._id",
+						username: "$userDetails.username",
+						profilePictureUrl: "$userDetails.profilePictureUrl",
+					},
+					// You might want to add other fields like start/end location names
+					startLocationName: 1,
+					endLocationName: 1,
+				},
+			},
+		]);
+
+		res.status(200).json(feedTrips);
+	} catch (error) {
+		console.error("getFollowingTripsFeedJson error:", error);
 		next(error);
 	}
 };

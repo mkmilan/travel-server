@@ -108,7 +108,7 @@ const processPendingRecommendations = async (
 				photos: photoIds, // Use validated photo IDs
 				associatedTrip: tripId,
 				// associatedPoiId: recData.associatedPoiId && mongoose.Types.ObjectId.isValid(recData.associatedPoiId) ? recData.associatedPoiId : null,
-				source: recData.source || "TRACKING_JSON", // More specific source
+				source: recData.source || "TRACKING", // More specific source
 			};
 
 			const savedRecommendation = await Recommendation.create(
