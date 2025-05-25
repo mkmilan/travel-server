@@ -183,6 +183,69 @@ exports.getTripJsonById = async (req, res, next) => {
 	}
 };
 
+/* PUT /api/v2/trips/json/:tripId (protected) */
+exports.updateTripJson = async (req, res, next) => {
+	const { tripId } = req.params;
+	const userId = req.user._id;
+
+	if (!mongoose.Types.ObjectId.isValid(tripId)) {
+		return res.status(400).json({ message: "Invalid Trip ID" });
+	}
+
+	try {
+		const trip = await Trip.findById(tripId);
+
+		if (!trip || trip.format !== "json") {
+			return res
+				.status(404)
+				.json({ message: "Trip not found or not JSON format" });
+		}
+
+		if (trip.user.toString() !== userId.toString()) {
+			return res
+				.status(403)
+				.json({ message: "User not authorized to update this trip" });
+		}
+
+		// Fields that can be updated
+		const {
+			title,
+			description,
+			startLocationName,
+			endLocationName,
+			defaultTripVisibility,
+			defaultTravelMode,
+		} = req.body;
+
+		// Update fields if they are provided in the request
+		if (title !== undefined) trip.title = title;
+		if (description !== undefined) trip.description = description;
+		if (startLocationName !== undefined)
+			trip.startLocationName = startLocationName;
+		if (endLocationName !== undefined) trip.endLocationName = endLocationName;
+		if (defaultTripVisibility !== undefined)
+			trip.defaultTripVisibility = defaultTripVisibility;
+		if (defaultTravelMode !== undefined)
+			trip.defaultTravelMode = defaultTravelMode;
+
+		// Note: For simplicity, this update does not re-calculate distance, duration, or simplifiedRoute.
+		// If segments or POIs were to be updated, those would need more complex handling similar to createTripJson.
+
+		const updatedTrip = await trip.save();
+		const populatedTrip = await Trip.findById(updatedTrip._id)
+			.populate("user", "username profilePictureUrl")
+			.lean();
+
+		res.status(200).json(populatedTrip);
+		console.log("trip update", populatedTrip);
+	} catch (error) {
+		console.error("updateTripJson error:", error);
+		if (!res.headersSent) {
+			next(error);
+		}
+	}
+};
+
 exports.getMyJsonTrips = async (req, res, next) => {
 	const userId = req.user._id;
 

@@ -14,4 +14,7 @@ router.get(
 	tripJsonController.getTripJsonById
 );
 
+// PUT /api/v2/trips/json/:tripId
+router.put("/json/:tripId", protect, tripJsonController.updateTripJson);
+
 module.exports = router;
