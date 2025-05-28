@@ -1,5 +1,6 @@
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
+const User = require("../models/User");
 
 /**
  * @desc    Processes an array of pending recommendation data from a JSON payload
@@ -9,22 +10,13 @@ const mongoose = require("mongoose");
  * @param   {mongoose.Types.ObjectId} tripId - The ID of the trip these recommendations are associated with.
  * @returns {Promise<Array<Object>>} A promise that resolves to an array of outcomes for each recommendation.
  */
-const processPendingRecommendations = async (
-	pendingRecommendations,
-	userId,
-	tripId
-) => {
-	if (
-		!pendingRecommendations ||
-		!Array.isArray(pendingRecommendations) ||
-		pendingRecommendations.length === 0
-	) {
+const processPendingRecommendations = async (pendingRecommendations, userId, tripId) => {
+	if (!pendingRecommendations || !Array.isArray(pendingRecommendations) || pendingRecommendations.length === 0) {
 		return []; // No recommendations to process
 	}
 
 	const createdRecommendationsInfo = [];
-	const allowedCategories =
-		Recommendation.schema.path("primaryCategory").enumValues;
+	const allowedCategories = Recommendation.schema.path("primaryCategory").enumValues;
 
 	for (const recData of pendingRecommendations) {
 		try {
@@ -50,18 +42,11 @@ const processPendingRecommendations = async (
 			const lat = parseFloat(recData.latitude);
 			const lon = parseFloat(recData.longitude);
 
-			if (
-				isNaN(lat) ||
-				isNaN(lon) ||
-				lat < -90 ||
-				lat > 90 ||
-				lon < -180 ||
-				lon > 180
-			) {
-				console.warn(
-					`Skipping recommendation (tripId: ${tripId}, name: ${recData.name}) due to invalid coordinates:`,
-					{ lat, lon }
-				);
+			if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+				console.warn(`Skipping recommendation (tripId: ${tripId}, name: ${recData.name}) due to invalid coordinates:`, {
+					lat,
+					lon,
+				});
 				createdRecommendationsInfo.push({
 					name: recData.name,
 					status: "skipped",
@@ -98,9 +83,7 @@ const processPendingRecommendations = async (
 				description: recData.description || recData.note || "", // 'note' as fallback from mobile
 				rating: rating,
 				primaryCategory: primaryCategory,
-				attributeTags: Array.isArray(recData.attributeTags)
-					? recData.attributeTags
-					: [],
+				attributeTags: Array.isArray(recData.attributeTags) ? recData.attributeTags : [],
 				location: {
 					type: "Point",
 					coordinates: [lon, lat], // [longitude, latitude]
@@ -111,22 +94,16 @@ const processPendingRecommendations = async (
 				source: recData.source || "TRACKING", // More specific source
 			};
 
-			const savedRecommendation = await Recommendation.create(
-				recommendationToSave
-			);
+			const savedRecommendation = await Recommendation.create(recommendationToSave);
 			createdRecommendationsInfo.push({
 				id: savedRecommendation._id,
 				name: savedRecommendation.name,
 				status: "created",
 			});
-			console.log(
-				`Successfully created recommendation '${savedRecommendation.name}' for trip ${tripId} via JSON.`
-			);
+			console.log(`Successfully created recommendation '${savedRecommendation.name}' for trip ${tripId} via JSON.`);
 		} catch (recError) {
 			console.error(
-				`Error saving a pending recommendation ('${
-					recData.name || "N/A"
-				}') for trip ${tripId} from JSON:`,
+				`Error saving a pending recommendation ('${recData.name || "N/A"}') for trip ${tripId} from JSON:`,
 				recError.message,
 				"Data:",
 				recData
@@ -147,9 +124,7 @@ const createSingleRecommendationJson = async (req, res, next) => {
 		const recommendationData = req.body;
 		// Ensure associatedTrip is explicitly null if not provided or empty,
 		// to be compatible with how processPendingRecommendations might use it.
-		const associatedTripId = recommendationData.associatedTrip
-			? recommendationData.associatedTrip
-			: null;
+		const associatedTripId = recommendationData.associatedTrip ? recommendationData.associatedTrip : null;
 
 		// Basic validation for the single recommendation object
 		if (
@@ -159,8 +134,7 @@ const createSingleRecommendationJson = async (req, res, next) => {
 			!recommendationData.primaryCategory
 		) {
 			return res.status(400).json({
-				message:
-					"Missing required fields for recommendation (name, latitude, longitude, primaryCategory).",
+				message: "Missing required fields for recommendation (name, latitude, longitude, primaryCategory).",
 			});
 		}
 
@@ -172,9 +146,7 @@ const createSingleRecommendationJson = async (req, res, next) => {
 		);
 
 		if (creationResults.length === 0 || !creationResults[0]) {
-			return res
-				.status(400)
-				.json({ message: "Recommendation processing failed." });
+			return res.status(400).json({ message: "Recommendation processing failed." });
 		}
 
 		const result = creationResults[0];
@@ -182,22 +154,16 @@ const createSingleRecommendationJson = async (req, res, next) => {
 			const newRecommendation = await Recommendation.findById(result.id);
 			if (!newRecommendation) {
 				// Should not happen if status is 'created' and id is present
-				return res
-					.status(404)
-					.json({ message: "Newly created recommendation not found." });
+				return res.status(404).json({ message: "Newly created recommendation not found." });
 			}
 			return res.status(201).json(newRecommendation);
 		} else {
-			return res
-				.status(400)
-				.json({ message: result.error || "Failed to create recommendation." });
+			return res.status(400).json({ message: result.error || "Failed to create recommendation." });
 		}
 	} catch (error) {
 		console.error("Error in createSingleRecommendationJson:", error);
 		if (!res.headersSent) {
-			res
-				.status(500)
-				.json({ message: "Server error while creating recommendation." });
+			res.status(500).json({ message: "Server error while creating recommendation." });
 		}
 		// Consider calling next(error) if you have a centralized error handler
 	}
@@ -227,25 +193,18 @@ const updateRecommendationJson = async (req, res, next) => {
 
 		// Update fields
 		if (updateData.name !== undefined) recommendation.name = updateData.name;
-		if (updateData.description !== undefined)
-			recommendation.description = updateData.description;
+		if (updateData.description !== undefined) recommendation.description = updateData.description;
 
 		if (updateData.rating !== undefined) {
 			const rating = parseFloat(updateData.rating);
 			if (isNaN(rating) || rating < 1 || rating > 5) {
-				return res
-					.status(400)
-					.json({ message: "Invalid rating. Must be between 1 and 5." });
+				return res.status(400).json({ message: "Invalid rating. Must be between 1 and 5." });
 			}
 			recommendation.rating = rating;
 		}
 
 		if (updateData.primaryCategory !== undefined) {
-			if (
-				!Recommendation.schema
-					.path("primaryCategory")
-					.enumValues.includes(updateData.primaryCategory)
-			) {
+			if (!Recommendation.schema.path("primaryCategory").enumValues.includes(updateData.primaryCategory)) {
 				return res.status(400).json({ message: "Invalid primary category." });
 			}
 			recommendation.primaryCategory = updateData.primaryCategory;
@@ -253,39 +212,21 @@ const updateRecommendationJson = async (req, res, next) => {
 
 		if (updateData.attributeTags !== undefined) {
 			if (!Array.isArray(updateData.attributeTags)) {
-				return res
-					.status(400)
-					.json({ message: "attributeTags must be an array." });
+				return res.status(400).json({ message: "attributeTags must be an array." });
 			}
 			recommendation.attributeTags = updateData.attributeTags;
 		}
 
-		if (
-			updateData.latitude !== undefined &&
-			updateData.longitude !== undefined
-		) {
+		if (updateData.latitude !== undefined && updateData.longitude !== undefined) {
 			const lat = parseFloat(updateData.latitude);
 			const lon = parseFloat(updateData.longitude);
-			if (
-				isNaN(lat) ||
-				isNaN(lon) ||
-				lat < -90 ||
-				lat > 90 ||
-				lon < -180 ||
-				lon > 180
-			) {
-				return res
-					.status(400)
-					.json({ message: "Invalid latitude or longitude." });
+			if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+				return res.status(400).json({ message: "Invalid latitude or longitude." });
 			}
 			recommendation.location = { type: "Point", coordinates: [lon, lat] };
-		} else if (
-			updateData.latitude !== undefined ||
-			updateData.longitude !== undefined
-		) {
+		} else if (updateData.latitude !== undefined || updateData.longitude !== undefined) {
 			return res.status(400).json({
-				message:
-					"Both latitude and longitude must be provided to update location.",
+				message: "Both latitude and longitude must be provided to update location.",
 			});
 		}
 
@@ -295,9 +236,7 @@ const updateRecommendationJson = async (req, res, next) => {
 				return res.status(400).json({ message: "photoIds must be an array." });
 			}
 			// Assuming photoIds are ObjectIds. If they are URLs, adjust validation.
-			recommendation.photos = updateData.photoIds.filter((id) =>
-				mongoose.Types.ObjectId.isValid(id)
-			);
+			recommendation.photos = updateData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
 		} else if (updateData.photos !== undefined) {
 			// Fallback if 'photos' is sent
 			if (!Array.isArray(updateData.photos)) {
@@ -305,16 +244,11 @@ const updateRecommendationJson = async (req, res, next) => {
 					message: "photos must be an array of valid photo identifiers.",
 				});
 			}
-			recommendation.photos = updateData.photos.filter((id) =>
-				mongoose.Types.ObjectId.isValid(id)
-			); // Or handle as URLs if applicable
+			recommendation.photos = updateData.photos.filter((id) => mongoose.Types.ObjectId.isValid(id)); // Or handle as URLs if applicable
 		}
 
 		if (updateData.associatedTrip !== undefined) {
-			if (
-				updateData.associatedTrip === null ||
-				mongoose.Types.ObjectId.isValid(updateData.associatedTrip)
-			) {
+			if (updateData.associatedTrip === null || mongoose.Types.ObjectId.isValid(updateData.associatedTrip)) {
 				recommendation.associatedTrip = updateData.associatedTrip;
 			} else {
 				return res.status(400).json({ message: "Invalid associatedTrip ID." });
@@ -323,11 +257,7 @@ const updateRecommendationJson = async (req, res, next) => {
 
 		// Add other updatable fields as necessary e.g. source
 		if (updateData.source !== undefined) {
-			if (
-				!Recommendation.schema
-					.path("source")
-					.enumValues.includes(updateData.source)
-			) {
+			if (!Recommendation.schema.path("source").enumValues.includes(updateData.source)) {
 				return res.status(400).json({ message: "Invalid source value." });
 			}
 			recommendation.source = updateData.source;
@@ -341,11 +271,57 @@ const updateRecommendationJson = async (req, res, next) => {
 			return res.status(400).json({ message: error.message });
 		}
 		if (!res.headersSent) {
-			res
-				.status(500)
-				.json({ message: "Server error while updating recommendation." });
+			res.status(500).json({ message: "Server error while updating recommendation." });
 		}
 		// Consider calling next(error)
+	}
+};
+
+/**
+ * @desc    Get recommendations created by a specific user (JSON focused)
+ * @route   GET /api/recommendations/json/user/:userId  (if recommendationJsonRoute.js is mounted at /api/recommendations/json)
+ * @access  Public (could use protectOptional if req.user becomes needed)
+ */
+const getUserRecommendationsJson = async (req, res, next) => {
+	const targetUserIdString = req.params.userId;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 10;
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(targetUserIdString)) {
+		return res.status(400).json({ message: `Invalid target user ID format: ${targetUserIdString}` });
+	}
+	const targetUserId = new mongoose.Types.ObjectId(targetUserIdString);
+
+	try {
+		// Check if user exists (optional, but good practice)
+		const userExists = await User.findById(targetUserId).countDocuments();
+		if (userExists === 0) {
+			return res.status(404).json({ message: "Target user not found" });
+		}
+
+		const recommendationsQuery = Recommendation.find({ user: targetUserId })
+			.populate("user", "username profilePictureUrl") // Populate creator details
+			.select("_id name description rating primaryCategory user createdAt location attributeTags photos associatedTrip") // Select relevant fields
+			.sort({ createdAt: -1 })
+			.skip(skip)
+			.limit(limit)
+			.lean();
+
+		const totalCountQuery = Recommendation.countDocuments({ user: targetUserId });
+
+		const [recommendations, totalCount] = await Promise.all([recommendationsQuery, totalCountQuery]);
+
+		res.status(200).json({
+			data: recommendations,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+			totalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching JSON recommendations for user ${targetUserIdString}:`, error);
+		next(error);
 	}
 };
 
@@ -353,4 +329,5 @@ module.exports = {
 	processPendingRecommendations,
 	createSingleRecommendationJson,
 	updateRecommendationJson,
+	getUserRecommendationsJson, // Add new export
 };

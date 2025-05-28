@@ -13,48 +13,7 @@ const path = require("path");
  * @route   GET /api/users/:userId
  * @access  Public
  */
-// const getUserProfileById = async (req, res, next) => {
-// 	const userId = req.params.userId;
 
-// 	// Validate ID format first
-// 	if (!mongoose.Types.ObjectId.isValid(userId)) {
-// 		res.status(400);
-// 		return next(new Error(`Invalid user ID format: ${userId}`));
-// 	}
-// 	try {
-// 		const user = await User.findById(userId).select("-password -email");
-// 		// .populate("followers", "username") // Optionally get usernames of followers
-// 		// .populate("following", "username"); // Optionally get usernames of following
-
-// 		if (!user) {
-// 			res.status(404); // Not Found
-// 			throw new Error("User not found");
-// 		}
-
-// 		// Optionally add counts if needed frequently
-// 		const profileData = {
-// 			_id: user._id,
-// 			username: user.username,
-// 			bio: user.bio,
-// 			profilePictureUrl: user.profilePictureUrl,
-// 			followersCount: user.followers.length,
-// 			followingCount: user.following.length,
-// 			followers: user.followers.map((id) => id.toString()),
-// 			following: user.following.map((id) => id.toString()),
-// 			createdAt: user.createdAt,
-// 		};
-
-// 		res.status(200).json(profileData);
-// 	} catch (error) {
-// 		// Handle potential CastError if userId format is invalid
-// 		if (error.name === "CastError") {
-// 			res.status(400); // Bad Request
-// 			next(new Error(`Invalid user ID format: ${req.params.userId}`));
-// 		} else {
-// 			next(error); // Pass other errors to the global error handler
-// 		}
-// 	}
-// };
 const getUserProfileById = async (req, res, next) => {
 	const userId = req.params.userId;
 
@@ -66,33 +25,32 @@ const getUserProfileById = async (req, res, next) => {
 
 	try {
 		// Fetch user and perform aggregations/counts in parallel
-		const [user, tripStats, recommendationCount, poiCountResult] =
-			await Promise.all([
-				User.findById(userId).select("-password -email"), // Exclude sensitive fields
-				Trip.aggregate([
-					// Aggregate total distance and count trips for the user
-					{ $match: { user: new mongoose.Types.ObjectId(userId) } },
-					{
-						$group: {
-							_id: null, // Group all trips for the user
-							totalDistance: { $sum: "$distanceMeters" },
-							totalTrips: { $sum: 1 },
-						},
+		const [user, tripStats, recommendationCount, poiCountResult] = await Promise.all([
+			User.findById(userId).select("-password -email"), // Exclude sensitive fields
+			Trip.aggregate([
+				// Aggregate total distance and count trips for the user
+				{ $match: { user: new mongoose.Types.ObjectId(userId) } },
+				{
+					$group: {
+						_id: null, // Group all trips for the user
+						totalDistance: { $sum: "$distanceMeters" },
+						totalTrips: { $sum: 1 },
 					},
-				]),
-				Recommendation.countDocuments({ user: userId }),
+				},
+			]),
+			Recommendation.countDocuments({ user: userId }),
 
-				Trip.aggregate([
-					// Aggregate total POIs for the user
-					{ $match: { user: new mongoose.Types.ObjectId(userId) } },
-					{
-						$project: {
-							poiCount: { $size: { $ifNull: ["$pointsOfInterest", []] } },
-						},
+			Trip.aggregate([
+				// Aggregate total POIs for the user
+				{ $match: { user: new mongoose.Types.ObjectId(userId) } },
+				{
+					$project: {
+						poiCount: { $size: { $ifNull: ["$pointsOfInterest", []] } },
 					},
-					{ $group: { _id: null, totalPois: { $sum: "$poiCount" } } },
-				]),
-			]);
+				},
+				{ $group: { _id: null, totalPois: { $sum: "$poiCount" } } },
+			]),
+		]);
 
 		if (!user) {
 			res.status(404); // Not Found
@@ -112,7 +70,6 @@ const getUserProfileById = async (req, res, next) => {
 			profilePictureUrl: user.profilePictureUrl,
 			followersCount: user.followers.length, // Existing count
 			followingCount: user.following.length, // Existing count
-			// followers: user.followers.map((id) => id.toString()),
 			settings: user.settings,
 			createdAt: user.createdAt,
 			totalDistance: Math.round(totalDistance), // Round distance to nearest meter
@@ -126,6 +83,87 @@ const getUserProfileById = async (req, res, next) => {
 		// Specific CastError handling moved to validation check above
 		console.error(`Error fetching profile for user ${userId}:`, error);
 		next(error); // Pass other errors to the global error handler
+	}
+};
+
+const getPublicProfileByUserId = async (req, res, next) => {
+	const targetUserIdString = req.params.userId;
+	const requestingUser = req.user; // Available if authenticated, due to protectOptional
+
+	// Validate ID format first
+	if (!mongoose.Types.ObjectId.isValid(targetUserIdString)) {
+		res.status(400);
+		return next(new Error(`Invalid user ID format: ${targetUserIdString}`));
+	}
+	const targetUserId = new mongoose.Types.ObjectId(targetUserIdString);
+
+	try {
+		// Fetch user and perform aggregations/counts in parallel
+		const [user, tripStats, recommendationCount, poiCountResult] = await Promise.all([
+			User.findById(targetUserId).select(
+				"-password -email -settings -emailVerificationToken -emailVerificationExpires -passwordResetToken -passwordResetExpires"
+			), // Exclude sensitive fields
+			Trip.aggregate([
+				{ $match: { user: targetUserId } },
+				{
+					$group: {
+						_id: null,
+						totalDistance: { $sum: "$distanceMeters" },
+						totalTrips: { $sum: 1 },
+					},
+				},
+			]),
+			Recommendation.countDocuments({ user: targetUserId }),
+			Trip.aggregate([
+				{ $match: { user: targetUserId } },
+				{ $project: { poiCount: { $size: { $ifNull: ["$pointsOfInterest", []] } } } },
+				{ $group: { _id: null, totalPois: { $sum: "$poiCount" } } },
+			]),
+		]);
+
+		if (!user) {
+			res.status(404);
+			return next(new Error("User not found"));
+		}
+
+		const totalDistance = tripStats[0]?.totalDistance || 0;
+		const totalTrips = tripStats[0]?.totalTrips || 0;
+		const totalPois = poiCountResult[0]?.totalPois || 0;
+
+		// Construct the public profile data object
+		const profileData = {
+			_id: user._id,
+			username: user.username,
+			bio: user.bio,
+			profilePictureUrl: user.profilePictureUrl,
+			followersCount: user.followers?.length || 0, // Ensure followers array exists
+			followingCount: user.following?.length || 0, // Ensure following array exists
+			createdAt: user.createdAt,
+			totalDistance: Math.round(totalDistance),
+			totalTrips: totalTrips,
+			totalRecommendations: recommendationCount,
+			totalPois: totalPois,
+			isFollowing: false, // Default to false
+		};
+
+		// Determine 'isFollowing' status if a user is authenticated
+		if (requestingUser && user.followers) {
+			// Check if the authenticated user's ID is in the target user's followers list
+			profileData.isFollowing = user.followers.some((followerId) => followerId.equals(requestingUser._id));
+		}
+
+		// Determine if the requesting user is the profile owner
+		// This can be useful for the client to know if it's viewing its own profile
+		if (requestingUser && requestingUser._id.equals(targetUserId)) {
+			profileData.isOwnProfile = true;
+		} else {
+			profileData.isOwnProfile = false;
+		}
+
+		res.status(200).json(profileData);
+	} catch (error) {
+		console.error(`Error fetching profile for user ${targetUserIdString}:`, error);
+		next(error);
 	}
 };
 
@@ -151,9 +189,7 @@ const updateUserProfile = async (req, res, next) => {
 
 		// --- Handle Profile Picture Upload ---
 		if (file) {
-			console.log(
-				`Processing profile picture in memory: ${file.originalname}, Size: ${file.size}`
-			);
+			console.log(`Processing profile picture in memory: ${file.originalname}, Size: ${file.size}`);
 
 			// --- Sharp Processing Pipeline (similar to uploadTripPhotos) ---
 			let processedBufferData;
@@ -181,9 +217,7 @@ const updateUserProfile = async (req, res, next) => {
 				// If it's still too large, reduce quality
 				if (bufferObj.data.length > TARGET_SIZE_KB * 1024) {
 					console.log(
-						`Profile pic > ${TARGET_SIZE_KB}KB (${(
-							bufferObj.data.length / 1024
-						).toFixed(1)} KB), reducing quality...`
+						`Profile pic > ${TARGET_SIZE_KB}KB (${(bufferObj.data.length / 1024).toFixed(1)} KB), reducing quality...`
 					);
 					currentQuality = 70; // Lower quality setting
 					bufferObj = await imageProcessor
@@ -195,20 +229,13 @@ const updateUserProfile = async (req, res, next) => {
 				processedMetadata = bufferObj.info;
 
 				console.log(
-					`Sharp processing complete for profile picture ${
-						file.originalname
-					}. New size: ${(processedMetadata.size / 1024).toFixed(
-						1
-					)} KB, quality: ${currentQuality}`
+					`Sharp processing complete for profile picture ${file.originalname}. New size: ${(
+						processedMetadata.size / 1024
+					).toFixed(1)} KB, quality: ${currentQuality}`
 				);
 			} catch (sharpError) {
-				console.error(
-					`Sharp processing failed for profile picture ${file.originalname}:`,
-					sharpError
-				);
-				throw new Error(
-					`Image processing failed for profile picture: ${sharpError.message}`
-				);
+				console.error(`Sharp processing failed for profile picture ${file.originalname}:`, sharpError);
+				throw new Error(`Image processing failed for profile picture: ${sharpError.message}`);
 			}
 			// --- End Sharp Processing ---
 
@@ -221,16 +248,11 @@ const updateUserProfile = async (req, res, next) => {
 				const oldFileId = user.profilePictureUrl.split("/").pop();
 				if (oldFileId && mongoose.Types.ObjectId.isValid(oldFileId)) {
 					try {
-						console.log(
-							`Attempting to delete old profile picture file: ${oldFileId}`
-						);
+						console.log(`Attempting to delete old profile picture file: ${oldFileId}`);
 						await storageService.deleteFile(oldFileId);
 						console.log(`Deleted old profile picture file: ${oldFileId}`);
 					} catch (deleteError) {
-						console.warn(
-							`Failed to delete old profile picture file ${oldFileId}, continuing...`,
-							deleteError
-						);
+						console.warn(`Failed to delete old profile picture file ${oldFileId}, continuing...`, deleteError);
 						// Don't block update if old file deletion fails, just log it
 					}
 				}
@@ -251,18 +273,14 @@ const updateUserProfile = async (req, res, next) => {
 				height: processedMetadata.height,
 			};
 
-			console.log(
-				`Uploading processed profile picture ${storageFilename} to GridFS...`
-			);
+			console.log(`Uploading processed profile picture ${storageFilename} to GridFS...`);
 			const fileId = await storageService.uploadFile(
 				processedBufferData, // Pass the processed buffer
 				storageFilename,
 				"image/webp", // Pass the correct content type
 				metadata // Pass the constructed metadata
 			);
-			console.log(
-				`Uploaded processed profile picture ${storageFilename} with ID: ${fileId}`
-			);
+			console.log(`Uploaded processed profile picture ${storageFilename} with ID: ${fileId}`);
 
 			// Update user's profilePictureUrl with the relative path
 			user.profilePictureUrl = `${fileId}`;
@@ -271,10 +289,7 @@ const updateUserProfile = async (req, res, next) => {
 
 		// Save the updated user document
 		const updatedUser = await user.save();
-		console.log(
-			"Updated user profile profilePicture:",
-			updatedUser.profilePictureUrl
-		);
+		console.log("Updated user profile profilePicture:", updatedUser.profilePictureUrl);
 
 		// Respond with updated user data
 		res.status(200).json({
@@ -285,9 +300,7 @@ const updateUserProfile = async (req, res, next) => {
 			profilePictureUrl: updatedUser.profilePictureUrl,
 			following: updatedUser.following,
 			followers: updatedUser.followers,
-			token:
-				req.headers.authorization?.split(" ")[1] ||
-				generateToken(updatedUser._id),
+			token: req.headers.authorization?.split(" ")[1] || generateToken(updatedUser._id),
 			createdAt: updatedUser.createdAt,
 			updatedAt: updatedUser.updatedAt,
 		});
@@ -393,14 +406,9 @@ const followUser = async (req, res, next) => {
 		await Promise.all([currentUser.save(), userToFollow.save()]);
 
 		console.log(`User ${currentUserId} followed user ${userIdToFollow}`);
-		res
-			.status(200)
-			.json({ message: `Successfully followed ${userToFollow.username}` });
+		res.status(200).json({ message: `Successfully followed ${userToFollow.username}` });
 	} catch (error) {
-		console.error(
-			`Error following user ${userIdToFollow} by user ${currentUserId}:`,
-			error
-		);
+		console.error(`Error following user ${userIdToFollow} by user ${currentUserId}:`, error);
 		next(error);
 	}
 };
@@ -444,26 +452,17 @@ const unfollowUser = async (req, res, next) => {
 
 		// --- Perform the unfollow ---
 		// Remove userToUnfollow from currentUser's following list
-		currentUser.following = currentUser.following.filter(
-			(id) => id.toString() !== userIdToUnfollow
-		);
+		currentUser.following = currentUser.following.filter((id) => id.toString() !== userIdToUnfollow);
 		// Remove currentUser from userToUnfollow's followers list
-		userToUnfollow.followers = userToUnfollow.followers.filter(
-			(id) => id.toString() !== currentUserId.toString()
-		);
+		userToUnfollow.followers = userToUnfollow.followers.filter((id) => id.toString() !== currentUserId.toString());
 
 		// --- Save both documents ---
 		await Promise.all([currentUser.save(), userToUnfollow.save()]);
 
 		console.log(`User ${currentUserId} unfollowed user ${userIdToUnfollow}`);
-		res
-			.status(200)
-			.json({ message: `Successfully unfollowed ${userToUnfollow.username}` });
+		res.status(200).json({ message: `Successfully unfollowed ${userToUnfollow.username}` });
 	} catch (error) {
-		console.error(
-			`Error unfollowing user ${userIdToUnfollow} by user ${currentUserId}:`,
-			error
-		);
+		console.error(`Error unfollowing user ${userIdToUnfollow} by user ${currentUserId}:`, error);
 		next(error);
 	}
 };
@@ -487,9 +486,7 @@ const getUserRecommendations = async (req, res, next) => {
 	try {
 		const [recommendations, totalCount] = await Promise.all([
 			Recommendation.find({ user: userId })
-				.select(
-					"_id name description rating primaryCategory user createdAt location"
-				) // Select fields needed for list display
+				.select("_id name description rating primaryCategory user createdAt location") // Select fields needed for list display
 				.sort({ createdAt: -1 }) // Sort by newest first
 				.skip(skip)
 				.limit(limit),
@@ -698,9 +695,7 @@ const getUserPhotos = async (req, res, next) => {
 		let allPhotoEntries = [];
 
 		// 1. Get User's Profile Picture
-		const userProfile = await User.findById(userObjectId).select(
-			"profilePictureUrl createdAt"
-		);
+		const userProfile = await User.findById(userObjectId).select("profilePictureUrl createdAt");
 		if (userProfile && userProfile.profilePictureUrl) {
 			// Assuming profilePictureUrl directly stores the GridFS ID
 			if (mongoose.Types.ObjectId.isValid(userProfile.profilePictureUrl)) {
@@ -716,9 +711,7 @@ const getUserPhotos = async (req, res, next) => {
 		}
 
 		// 2. Get Photos from User's Trips
-		const trips = await Trip.find({ user: userObjectId })
-			.select("photos createdAt title")
-			.sort({ createdAt: -1 });
+		const trips = await Trip.find({ user: userObjectId }).select("photos createdAt title").sort({ createdAt: -1 });
 
 		trips.forEach((trip) => {
 			trip.photos.forEach((photoId) => {
@@ -816,16 +809,13 @@ const getUserSettings = async (req, res, next) => {
  * @access  Private
  */
 const updateUserSettings = async (req, res, next) => {
+	console.log("Updating user settings body:", req.body);
+	console.log("Updating user settings user:", req?.user);
+
 	try {
 		const userId = req.user._id;
-		const {
-			defaultTripVisibility,
-			defaultTravelMode,
-			preferredUnits,
-			themePreference,
-			dateFormat,
-			timeFormat,
-		} = req.body;
+		const { defaultTripVisibility, defaultTravelMode, preferredUnits, themePreference, dateFormat, timeFormat } =
+			req.body;
 
 		const user = await User.findById(userId);
 
@@ -835,14 +825,10 @@ const updateUserSettings = async (req, res, next) => {
 		}
 
 		// Update only the fields that are provided in the request
-		if (defaultTripVisibility !== undefined)
-			user.settings.defaultTripVisibility = defaultTripVisibility;
-		if (defaultTravelMode !== undefined)
-			user.settings.defaultTravelMode = defaultTravelMode;
-		if (preferredUnits !== undefined)
-			user.settings.preferredUnits = preferredUnits;
-		if (themePreference !== undefined)
-			user.settings.themePreference = themePreference;
+		if (defaultTripVisibility !== undefined) user.settings.defaultTripVisibility = defaultTripVisibility;
+		if (defaultTravelMode !== undefined) user.settings.defaultTravelMode = defaultTravelMode;
+		if (preferredUnits !== undefined) user.settings.preferredUnits = preferredUnits;
+		if (themePreference !== undefined) user.settings.themePreference = themePreference;
 		if (dateFormat !== undefined) user.settings.dateFormat = dateFormat;
 		if (timeFormat !== undefined) user.settings.timeFormat = timeFormat;
 
@@ -863,6 +849,7 @@ const updateUserSettings = async (req, res, next) => {
 
 module.exports = {
 	getUserProfileById,
+	getPublicProfileByUserId,
 	updateUserProfile,
 	followUser,
 	unfollowUser,

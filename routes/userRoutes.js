@@ -12,8 +12,9 @@ const {
 	getUserPhotos,
 	getUserSettings,
 	updateUserSettings,
+	getPublicProfileByUserId,
 } = require("../controllers/userController");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, protectOptional } = require("../middleware/authMiddleware");
 const { uploadSinglePhoto } = require("../config/multerConfig");
 
 const router = express.Router();
@@ -23,7 +24,8 @@ router.get("/settings", protect, getUserSettings);
 router.put("/settings", protect, updateUserSettings);
 router.get("/:userId", getUserProfileById);
 // --- End reorder ---
-
+//get other user profile by userId
+router.get("/user/:userId", protectOptional, getPublicProfileByUserId);
 // Note: We use '/me' here to avoid conflict with '/:userId'.
 // The actual user ID comes from the protect middleware (req.user._id)
 router.put("/me", protect, uploadSinglePhoto, updateUserProfile);

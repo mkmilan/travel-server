@@ -3,9 +3,7 @@ const Trip = require("../models/Trip");
 const User = require("../models/User");
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
-const {
-	processPendingRecommendations,
-} = require("./recommendationJsonController"); // Import the new function
+const { processPendingRecommendations } = require("./recommendationJsonController"); // Import the new function
 const { json } = require("express");
 
 /* POST  /api/v2/trips/json   (protected) */
@@ -27,9 +25,7 @@ exports.createTripJson = async (req, res, next) => {
 		} = req.body;
 
 		if (!startTime || !segments.length) {
-			return res
-				.status(400)
-				.json({ message: "startTime & segments are required" });
+			return res.status(400).json({ message: "startTime & segments are required" });
 		}
 
 		const allPts = segments.flatMap((s) => s.track);
@@ -40,9 +36,7 @@ exports.createTripJson = async (req, res, next) => {
 		const line = turf.lineString(allPts.map((p) => [p.lon, p.lat]));
 		const distanceMeters = turf.length(line, { units: "meters" });
 		const startDate = new Date(startTime);
-		const endDate = new Date(
-			segments[segments.length - 1].endTime || allPts[allPts.length - 1].t
-		);
+		const endDate = new Date(segments[segments.length - 1].endTime || allPts[allPts.length - 1].t);
 		const durationMillis = endDate.getTime() - startDate.getTime();
 		const simplified = turf.simplify(line, {
 			tolerance: 0.0001,
@@ -106,9 +100,7 @@ exports.createTripJson = async (req, res, next) => {
 		}
 		// --- End Recommendation Processing ---
 
-		const populatedTrip = await Trip.findById(savedTrip._id)
-			.populate("user", "username profilePictureUrl")
-			.lean();
+		const populatedTrip = await Trip.findById(savedTrip._id).populate("user", "username profilePictureUrl").lean();
 
 		res.status(201).json({
 			trip: populatedTrip,
@@ -130,22 +122,14 @@ exports.getTripJsonById = async (req, res, next) => {
 	}
 
 	try {
-		const trip = await Trip.findById(tripId)
-			.populate("user", "username profilePictureUrl followers")
-			.lean(); // Keep .lean() for the main trip object
+		const trip = await Trip.findById(tripId).populate("user", "username profilePictureUrl followers").lean(); // Keep .lean() for the main trip object
 
 		if (!trip || trip.format !== "json") {
-			return res
-				.status(404)
-				.json({ message: "Trip not found or not JSON format" });
+			return res.status(404).json({ message: "Trip not found or not JSON format" });
 		}
 
 		const isOwner = req.user?._id?.toString() === trip.user._id.toString();
-		const isFollower =
-			req.user?._id &&
-			trip.user.followers?.some(
-				(f) => f.toString() === req.user._id.toString()
-			);
+		const isFollower = req.user?._id && trip.user.followers?.some((f) => f.toString() === req.user._id.toString());
 
 		if (
 			trip.defaultTripVisibility === "public" ||
@@ -162,21 +146,15 @@ exports.getTripJsonById = async (req, res, next) => {
 			// Add recommendations to the trip object
 			const tripWithRecommendations = { ...trip, recommendations };
 
-			console.log(
-				`Returning trip ${tripId} with ${recommendations.length} recommendations.`
-			);
+			console.log(`Returning trip ${tripId} with ${recommendations.length} recommendations.`);
 			return res.status(200).json(tripWithRecommendations);
 		}
 
 		if (!req.user) {
-			return res
-				.status(401)
-				.json({ message: "Authentication required to view this trip" });
+			return res.status(401).json({ message: "Authentication required to view this trip" });
 		}
 
-		return res
-			.status(403)
-			.json({ message: "You don't have permission to view this trip" });
+		return res.status(403).json({ message: "You don't have permission to view this trip" });
 	} catch (error) {
 		console.error("getTripJsonById error:", error);
 		next(error);
@@ -196,45 +174,30 @@ exports.updateTripJson = async (req, res, next) => {
 		const trip = await Trip.findById(tripId);
 
 		if (!trip || trip.format !== "json") {
-			return res
-				.status(404)
-				.json({ message: "Trip not found or not JSON format" });
+			return res.status(404).json({ message: "Trip not found or not JSON format" });
 		}
 
 		if (trip.user.toString() !== userId.toString()) {
-			return res
-				.status(403)
-				.json({ message: "User not authorized to update this trip" });
+			return res.status(403).json({ message: "User not authorized to update this trip" });
 		}
 
 		// Fields that can be updated
-		const {
-			title,
-			description,
-			startLocationName,
-			endLocationName,
-			defaultTripVisibility,
-			defaultTravelMode,
-		} = req.body;
+		const { title, description, startLocationName, endLocationName, defaultTripVisibility, defaultTravelMode } =
+			req.body;
 
 		// Update fields if they are provided in the request
 		if (title !== undefined) trip.title = title;
 		if (description !== undefined) trip.description = description;
-		if (startLocationName !== undefined)
-			trip.startLocationName = startLocationName;
+		if (startLocationName !== undefined) trip.startLocationName = startLocationName;
 		if (endLocationName !== undefined) trip.endLocationName = endLocationName;
-		if (defaultTripVisibility !== undefined)
-			trip.defaultTripVisibility = defaultTripVisibility;
-		if (defaultTravelMode !== undefined)
-			trip.defaultTravelMode = defaultTravelMode;
+		if (defaultTripVisibility !== undefined) trip.defaultTripVisibility = defaultTripVisibility;
+		if (defaultTravelMode !== undefined) trip.defaultTravelMode = defaultTravelMode;
 
 		// Note: For simplicity, this update does not re-calculate distance, duration, or simplifiedRoute.
 		// If segments or POIs were to be updated, those would need more complex handling similar to createTripJson.
 
 		const updatedTrip = await trip.save();
-		const populatedTrip = await Trip.findById(updatedTrip._id)
-			.populate("user", "username profilePictureUrl")
-			.lean();
+		const populatedTrip = await Trip.findById(updatedTrip._id).populate("user", "username profilePictureUrl").lean();
 
 		res.status(200).json(populatedTrip);
 		console.log("trip update", populatedTrip);
@@ -285,11 +248,7 @@ exports.getFollowingTripsFeedJson = async (req, res, next) => {
 	try {
 		// 1. Get the list of users the current user is following
 		const currentUser = await User.findById(userId).select("following").lean();
-		if (
-			!currentUser ||
-			!currentUser.following ||
-			currentUser.following.length === 0
-		) {
+		if (!currentUser || !currentUser.following || currentUser.following.length === 0) {
 			return res.status(200).json([]); // No one followed, return empty feed
 		}
 		const followedUserIds = currentUser.following;
@@ -300,10 +259,7 @@ exports.getFollowingTripsFeedJson = async (req, res, next) => {
 				$match: {
 					user: { $in: followedUserIds }, // Trips from users I follow
 					format: "json",
-					$or: [
-						{ defaultTripVisibility: "public" },
-						{ defaultTripVisibility: "followers_only" },
-					],
+					$or: [{ defaultTripVisibility: "public" }, { defaultTripVisibility: "followers_only" }],
 				},
 			},
 			{ $sort: { startDate: -1 } }, // Show newest trips first
@@ -354,6 +310,96 @@ exports.getFollowingTripsFeedJson = async (req, res, next) => {
 		res.status(200).json(feedTrips);
 	} catch (error) {
 		console.error("getFollowingTripsFeedJson error:", error);
+		next(error);
+	}
+};
+
+/**
+ * @desc    Get JSON trips for a specific user, respecting visibility
+ * @route   GET /api/v2/trips/json/user/:userId
+ * @access  Public (with optional auth for followers_only/private content)
+ */
+exports.getUserJsonTrips = async (req, res, next) => {
+	const targetUserIdString = req.params.userId;
+	const requestingUser = req.user; // From protectOptional middleware
+
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 10;
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(targetUserIdString)) {
+		return res.status(400).json({ message: `Invalid target user ID format: ${targetUserIdString}` });
+	}
+	const targetUserId = new mongoose.Types.ObjectId(targetUserIdString);
+
+	try {
+		const targetUser = await User.findById(targetUserId).select("followers").lean();
+		if (!targetUser) {
+			return res.status(404).json({ message: "Target user not found" });
+		}
+
+		const queryConditions = {
+			user: targetUserId,
+			format: "json",
+		};
+
+		const allowedVisibilities = ["public"];
+		let isOwner = false;
+
+		if (requestingUser) {
+			if (requestingUser._id.equals(targetUserId)) {
+				// Owner can see all their trips
+				allowedVisibilities.push("followers_only", "private");
+				isOwner = true;
+			} else {
+				// Check if the requesting user follows the target user
+				const isFollower = targetUser.followers.some((followerId) => followerId.equals(requestingUser._id));
+				if (isFollower) {
+					allowedVisibilities.push("followers_only");
+				}
+			}
+		}
+		// If not owner, and not a follower (or unauthenticated), only 'public' is allowed
+
+		queryConditions.defaultTripVisibility = { $in: allowedVisibilities };
+
+		const tripsQuery = Trip.find(queryConditions)
+			.populate("user", "username profilePictureUrl") // Keep user populated
+			.sort({ startDate: -1 })
+			.skip(skip)
+			.limit(limit)
+			.select({
+				// Similar projection to getMyJsonTrips or getFollowingTripsFeedJson
+				title: 1,
+				startDate: 1,
+				description: { $substrCP: ["$description", 0, 150] },
+				defaultTravelMode: 1,
+				defaultTripVisibility: 1,
+				simplifiedRoute: 1,
+				distanceMeters: 1,
+				durationMillis: 1,
+				likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
+				commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
+				user: 1, // Already populated
+				createdAt: 1,
+				startLocationName: 1,
+				endLocationName: 1,
+			})
+			.lean();
+
+		const totalCountQuery = Trip.countDocuments(queryConditions);
+
+		const [trips, totalCount] = await Promise.all([tripsQuery, totalCountQuery]);
+
+		res.status(200).json({
+			data: trips,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+			totalCount,
+		});
+	} catch (error) {
+		console.error(`Error fetching JSON trips for user ${targetUserIdString}:`, error);
 		next(error);
 	}
 };
