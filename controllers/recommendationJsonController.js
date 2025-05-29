@@ -1,6 +1,7 @@
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const User = require("../models/User");
+const Trip = require("../models/Trip");
 
 /**
  * @desc    Processes an array of pending recommendation data from a JSON payload
@@ -278,12 +279,14 @@ const updateRecommendationJson = async (req, res, next) => {
 };
 
 /**
- * @desc    Get recommendations created by a specific user (JSON focused)
- * @route   GET /api/recommendations/json/user/:userId  (if recommendationJsonRoute.js is mounted at /api/recommendations/json)
- * @access  Public (could use protectOptional if req.user becomes needed)
+ * @desc    Get recommendations created by a specific user (JSON focused), respecting visibility
+ * @route   GET /api/v2/recommendations/user/:userId
+ * @access  Public (conditionally, based on trip visibility and user relationship)
  */
 const getUserRecommendationsJson = async (req, res, next) => {
 	const targetUserIdString = req.params.userId;
+	const requestingUser = req.user; // From protectOptional middleware
+
 	const page = parseInt(req.query.page) || 1;
 	const limit = parseInt(req.query.limit) || 10;
 	const skip = (page - 1) * limit;
@@ -294,23 +297,124 @@ const getUserRecommendationsJson = async (req, res, next) => {
 	const targetUserId = new mongoose.Types.ObjectId(targetUserIdString);
 
 	try {
-		// Check if user exists (optional, but good practice)
-		const userExists = await User.findById(targetUserId).countDocuments();
-		if (userExists === 0) {
+		const targetUserDetails = await User.findById(targetUserId).select("followers").lean();
+		if (!targetUserDetails) {
 			return res.status(404).json({ message: "Target user not found" });
 		}
 
-		const recommendationsQuery = Recommendation.find({ user: targetUserId })
-			.populate("user", "username profilePictureUrl") // Populate creator details
-			.select("_id name description rating primaryCategory user createdAt location attributeTags photos associatedTrip") // Select relevant fields
-			.sort({ createdAt: -1 })
-			.skip(skip)
-			.limit(limit)
-			.lean();
+		let isOwner = false;
+		let isFollower = false;
 
-		const totalCountQuery = Recommendation.countDocuments({ user: targetUserId });
+		if (requestingUser) {
+			if (requestingUser._id.equals(targetUserId)) {
+				isOwner = true;
+			} else {
+				isFollower = targetUserDetails.followers.some((followerId) => followerId.equals(requestingUser._id));
+			}
+		}
 
-		const [recommendations, totalCount] = await Promise.all([recommendationsQuery, totalCountQuery]);
+		const filterConditions = {
+			$expr: {
+				$or: [
+					// Case 1: Recommendation is associated with a public trip
+					{ $eq: ["$tripInfo.defaultTripVisibility", "public"] },
+					// Case 2: Recommendation is associated with a followers_only trip
+					{
+						$and: [{ $eq: ["$tripInfo.defaultTripVisibility", "followers_only"] }, { $or: [isOwner, isFollower] }],
+					},
+					// Case 3: Recommendation is associated with a private trip
+					{
+						$and: [{ $eq: ["$tripInfo.defaultTripVisibility", "private"] }, isOwner],
+					},
+					// Case 4: Recommendation has NO associated trip (visible only to its owner)
+					{
+						$and: [
+							{ $eq: ["$associatedTrip", null] }, // Check if the field itself is null
+							isOwner,
+						],
+					},
+				],
+			},
+		};
+
+		const basePipeline = [
+			{ $match: { user: targetUserId } }, // Match recommendations by the target user
+			{
+				$lookup: {
+					// Join with trips collection
+					from: "trips",
+					localField: "associatedTrip",
+					foreignField: "_id",
+					pipeline: [
+						// Select only necessary fields from the trip
+						{ $project: { defaultTripVisibility: 1 } },
+					],
+					as: "tripInfo",
+				},
+			},
+			{
+				$unwind: {
+					// Unwind the tripInfo array
+					path: "$tripInfo",
+					preserveNullAndEmptyArrays: true, // Keep recommendations even if no associated trip
+				},
+			},
+			{ $match: filterConditions }, // Apply the dynamic visibility filter
+		];
+
+		const recommendationsQueryPipeline = [
+			...basePipeline,
+			{ $sort: { createdAt: -1 } },
+			{ $skip: skip },
+			{ $limit: limit },
+			{
+				// Re-populate user details for the recommendation itself (creator)
+				$lookup: {
+					from: "users",
+					localField: "user",
+					foreignField: "_id",
+					pipeline: [{ $project: { username: 1, profilePictureUrl: 1 } }],
+					as: "userDetails",
+				},
+			},
+			{
+				$unwind: {
+					path: "$userDetails",
+					preserveNullAndEmptyArrays: true,
+				},
+			},
+			{
+				$project: {
+					// Define the shape of the output documents
+					_id: 1,
+					name: 1,
+					description: 1,
+					rating: 1,
+					primaryCategory: 1,
+					user: {
+						// Populate user details for the recommendation's creator
+						_id: "$userDetails._id",
+						username: "$userDetails.username",
+						profilePictureUrl: "$userDetails.profilePictureUrl",
+					},
+					createdAt: 1,
+					location: 1,
+					attributeTags: 1,
+					photos: 1,
+					associatedTrip: 1,
+					// tripVisibility: "$tripInfo.defaultTripVisibility" // Optional: for debugging
+				},
+			},
+		];
+
+		const totalCountPipeline = [...basePipeline, { $count: "totalCount" }];
+
+		const [recommendations, totalCountResult] = await Promise.all([
+			Recommendation.aggregate(recommendationsQueryPipeline),
+			Recommendation.aggregate(totalCountPipeline),
+		]);
+
+		const totalCount = totalCountResult.length > 0 ? totalCountResult[0].totalCount : 0;
 
 		res.status(200).json({
 			data: recommendations,

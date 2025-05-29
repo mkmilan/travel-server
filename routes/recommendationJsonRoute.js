@@ -1,6 +1,6 @@
 // filepath: /home/mkmilan/Documents/my/travel-2/server/routes/recommendationJsonRoute.js
 const express = require("express");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, protectOptional } = require("../middleware/authMiddleware");
 
 // Import only the JSON controller methods needed for these routes
 const {
@@ -18,7 +18,7 @@ router.post("/", protect, createSingleRecommendationJson); // Changed path to /
 
 router.get("/:recommendationId", getRecommendationById); // This might need protectOptional or protect
 
-router.get("/user/:userId", getUserRecommendationsJson);
+router.get("/user/:userId", protectOptional, getUserRecommendationsJson);
 
 router.put("/:recommendationId", protect, updateRecommendationJson); // Changed path to /:recommendationId
 
