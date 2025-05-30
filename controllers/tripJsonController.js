@@ -217,6 +217,14 @@ exports.getMyJsonTrips = async (req, res, next) => {
 			{ $match: { user: userId, format: "json" } },
 			{ $sort: { startDate: -1 } },
 			{
+				$lookup: {
+					from: "recommendations", // The collection name for your Recommendation model
+					localField: "_id", // Field from the trips collection
+					foreignField: "associatedTrip", // Field in the recommendations collection that links to the trip
+					as: "tripRecommendations", // Name of the new array field to add to the input documents
+				},
+			},
+			{
 				$project: {
 					_id: 1,
 					title: 1,
@@ -229,7 +237,11 @@ exports.getMyJsonTrips = async (req, res, next) => {
 					durationMillis: 1,
 					likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
 					commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
+					recommendationCount: { $ifNull: [{ $size: "$tripRecommendations" }, 0] },
+					isLikedByCurrentUser: { $in: [userId, { $ifNull: ["$likes", []] }] }, // Added isLikedByCurrentUser
 					createdAt: 1,
+					// user field is not projected here as it's "my" trips, client knows the user.
+					// If needed for consistency, it can be added via another $lookup or if populated before aggregation.
 				},
 			},
 		]);
@@ -280,6 +292,14 @@ exports.getFollowingTripsFeedJson = async (req, res, next) => {
 				},
 			},
 			{
+				$lookup: {
+					from: "recommendations",
+					localField: "_id",
+					foreignField: "associatedTrip",
+					as: "tripRecommendations",
+				},
+			},
+			{
 				$project: {
 					// Select and shape the data for the feed
 					_id: 1,
@@ -293,6 +313,8 @@ exports.getFollowingTripsFeedJson = async (req, res, next) => {
 					durationMillis: 1,
 					likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
 					commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
+					recommendationCount: { $ifNull: [{ $size: "$tripRecommendations" }, 0] },
+					isLikedByCurrentUser: { $in: [userId, { $ifNull: ["$likes", []] }] },
 					createdAt: 1,
 					user: {
 						// Include selected user details
@@ -363,33 +385,68 @@ exports.getUserJsonTrips = async (req, res, next) => {
 
 		queryConditions.defaultTripVisibility = { $in: allowedVisibilities };
 
-		const tripsQuery = Trip.find(queryConditions)
-			.populate("user", "username profilePictureUrl") // Keep user populated
-			.sort({ startDate: -1 })
-			.skip(skip)
-			.limit(limit)
-			.select({
-				// Similar projection to getMyJsonTrips or getFollowingTripsFeedJson
-				title: 1,
-				startDate: 1,
-				description: { $substrCP: ["$description", 0, 150] },
-				defaultTravelMode: 1,
-				defaultTripVisibility: 1,
-				simplifiedRoute: 1,
-				distanceMeters: 1,
-				durationMillis: 1,
-				likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
-				commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
-				user: 1, // Already populated
-				createdAt: 1,
-				startLocationName: 1,
-				endLocationName: 1,
-			})
-			.lean();
+		const tripsPipeline = [
+			{ $match: queryConditions },
+			{ $sort: { startDate: -1 } },
+			{ $skip: skip },
+			{ $limit: limit },
+			{
+				$lookup: {
+					from: "users",
+					localField: "user",
+					foreignField: "_id",
+					as: "userDetails",
+				},
+			},
+			{ $unwind: { path: "$userDetails", preserveNullAndEmptyArrays: true } },
+			{
+				$lookup: {
+					from: "recommendations",
+					localField: "_id",
+					foreignField: "associatedTrip",
+					as: "tripRecommendations",
+				},
+			},
+			{
+				$addFields: {
+					recommendationCount: { $ifNull: [{ $size: "$tripRecommendations" }, 0] },
+					isLikedByCurrentUser: { $in: [requestingUser?._id, { $ifNull: ["$likes", []] }] },
+					user: {
+						// Shaping the user object
+						_id: "$userDetails._id",
+						username: "$userDetails.username",
+						profilePictureUrl: "$userDetails.profilePictureUrl",
+					},
+				},
+			},
+			{
+				$project: {
+					// Final field selection
+					title: 1,
+					startDate: 1,
+					description: { $substrCP: ["$description", 0, 150] },
+					defaultTravelMode: 1,
+					defaultTripVisibility: 1,
+					simplifiedRoute: 1,
+					distanceMeters: 1,
+					durationMillis: 1,
+					likesCount: { $ifNull: [{ $size: "$likes" }, 0] },
+					commentsCount: { $ifNull: [{ $size: "$comments" }, 0] },
+					recommendationCount: 1,
+					isLikedByCurrentUser: 1,
+					user: 1,
+					createdAt: 1,
+					startLocationName: 1,
+					endLocationName: 1,
+					// Clean up temporary fields
+					userDetails: 0,
+					tripRecommendations: 0,
+				},
+			},
+		];
 
-		const totalCountQuery = Trip.countDocuments(queryConditions);
-
-		const [trips, totalCount] = await Promise.all([tripsQuery, totalCountQuery]);
+		const trips = await Trip.aggregate(tripsPipeline);
+		const totalCount = await Trip.countDocuments(queryConditions);
 
 		res.status(200).json({
 			data: trips,
