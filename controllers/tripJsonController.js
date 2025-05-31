@@ -439,8 +439,8 @@ exports.getUserJsonTrips = async (req, res, next) => {
 					startLocationName: 1,
 					endLocationName: 1,
 					// Clean up temporary fields
-					userDetails: 0,
-					tripRecommendations: 0,
+					// userDetails: 0,
+					// tripRecommendations: 0,
 				},
 			},
 		];
