@@ -7,7 +7,7 @@ const { protect, protectOptional } = require("../middleware/authMiddleware");
 router.post("/json", protect, tripJsonController.createTripJson);
 
 router.get("/json/me", protect, tripJsonController.getMyJsonTrips);
-router.get("/json/feed", protect, tripJsonController.getFollowingTripsFeedJson);
+router.get("/json/feed", protect, tripJsonController.getTripsFeedJson);
 router.get("/json/:tripId", protectOptional, tripJsonController.getTripJsonById);
 // GET /api/v2/trips/json/user/:userId - New route for specific user's JSON trips
 router.get("/json/user/:userId", protectOptional, tripJsonController.getUserJsonTrips);

@@ -211,11 +211,18 @@ exports.updateTripJson = async (req, res, next) => {
 
 exports.getMyJsonTrips = async (req, res, next) => {
 	const userId = req.user._id;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 10;
+	const skip = (page - 1) * limit;
 
 	try {
-		const trips = await Trip.aggregate([
-			{ $match: { user: userId, format: "json" } },
+		const matchQuery = { user: userId, format: "json" };
+
+		const tripsPipeline = [
+			{ $match: matchQuery },
 			{ $sort: { startDate: -1 } },
+			{ $skip: skip },
+			{ $limit: limit },
 			{
 				$lookup: {
 					from: "recommendations", // The collection name for your Recommendation model
@@ -244,9 +251,18 @@ exports.getMyJsonTrips = async (req, res, next) => {
 					// If needed for consistency, it can be added via another $lookup or if populated before aggregation.
 				},
 			},
-		]);
+		];
 
-		res.status(200).json(trips);
+		const trips = await Trip.aggregate(tripsPipeline);
+		const totalCount = await Trip.countDocuments(matchQuery);
+
+		res.status(200).json({
+			items: trips,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+			totalCount,
+		});
 	} catch (error) {
 		console.error("getMyJsonTrips error:", error);
 		next(error);
@@ -254,27 +270,38 @@ exports.getMyJsonTrips = async (req, res, next) => {
 };
 
 /* GET /api/v2/trips/json/feed (protected) */
-exports.getFollowingTripsFeedJson = async (req, res, next) => {
+exports.getTripsFeedJson = async (req, res, next) => {
 	const userId = req.user._id;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 10;
+	const skip = (page - 1) * limit;
 
 	try {
 		// 1. Get the list of users the current user is following
 		const currentUser = await User.findById(userId).select("following").lean();
 		if (!currentUser || !currentUser.following || currentUser.following.length === 0) {
-			return res.status(200).json([]); // No one followed, return empty feed
+			return res.status(200).json({
+				items: [],
+				page,
+				limit,
+				totalPages: 0,
+				totalCount: 0,
+			}); // No one followed, return empty feed
 		}
 		const followedUserIds = currentUser.following;
 
+		const matchStage = {
+			user: { $in: followedUserIds }, // Trips from users I follow
+			format: "json",
+			$or: [{ defaultTripVisibility: "public" }, { defaultTripVisibility: "followers_only" }],
+		};
+
 		// 2. Fetch trips from followed users
-		const feedTrips = await Trip.aggregate([
-			{
-				$match: {
-					user: { $in: followedUserIds }, // Trips from users I follow
-					format: "json",
-					$or: [{ defaultTripVisibility: "public" }, { defaultTripVisibility: "followers_only" }],
-				},
-			},
+		const feedTripsPipeline = [
+			{ $match: matchStage },
 			{ $sort: { startDate: -1 } }, // Show newest trips first
+			{ $skip: skip },
+			{ $limit: limit },
 			{
 				$lookup: {
 					// Populate user details for each trip
@@ -322,16 +349,24 @@ exports.getFollowingTripsFeedJson = async (req, res, next) => {
 						username: "$userDetails.username",
 						profilePictureUrl: "$userDetails.profilePictureUrl",
 					},
-					// You might want to add other fields like start/end location names
 					startLocationName: 1,
 					endLocationName: 1,
 				},
 			},
-		]);
+		];
 
-		res.status(200).json(feedTrips);
+		const feedTrips = await Trip.aggregate(feedTripsPipeline);
+		const totalCount = await Trip.countDocuments(matchStage);
+
+		res.status(200).json({
+			items: feedTrips,
+			page,
+			limit,
+			totalPages: Math.ceil(totalCount / limit),
+			totalCount,
+		});
 	} catch (error) {
-		console.error("getFollowingTripsFeedJson error:", error);
+		console.error("getTripsFeedJson error:", error); // Corrected console error log name
 		next(error);
 	}
 };
