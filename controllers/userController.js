@@ -174,7 +174,7 @@ const getPublicProfileByUserId = async (req, res, next) => {
  */
 const updateUserProfile = async (req, res, next) => {
 	const userId = req.user._id;
-	const { bio } = req.body;
+	const { username, bio } = req.body;
 	const file = req.file; // File from uploadSinglePhoto middleware
 
 	try {
@@ -184,6 +184,9 @@ const updateUserProfile = async (req, res, next) => {
 			throw new Error("User not found");
 		}
 
+		if (username !== undefined && username.trim() !== "" && user.username !== username.trim()) {
+			user.username = username.trim();
+		}
 		// Update bio if provided
 		user.bio = bio !== undefined ? bio.trim() : user.bio;
 
