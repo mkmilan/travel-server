@@ -146,7 +146,6 @@ exports.getTripJsonById = async (req, res, next) => {
 			// Add recommendations to the trip object
 			const tripWithRecommendations = { ...trip, recommendations };
 
-			console.log(`Returning trip ${tripId} with ${recommendations.length} recommendations.`);
 			return res.status(200).json(tripWithRecommendations);
 		}
 
@@ -184,6 +183,8 @@ exports.updateTripJson = async (req, res, next) => {
 		// Fields that can be updated
 		const { title, description, startLocationName, endLocationName, defaultTripVisibility, defaultTravelMode } =
 			req.body;
+		// const { title, description, startLocationName, endLocationName, defaultTripVisibility, defaultTravelMode, photos } =
+		// 	req.body;
 
 		// Update fields if they are provided in the request
 		if (title !== undefined) trip.title = title;
@@ -193,6 +194,9 @@ exports.updateTripJson = async (req, res, next) => {
 		if (defaultTripVisibility !== undefined) trip.defaultTripVisibility = defaultTripVisibility;
 		if (defaultTravelMode !== undefined) trip.defaultTravelMode = defaultTravelMode;
 
+		// if (photos !== undefined && Array.isArray(photos)) {
+		// 	trip.photos = photos.filter((id) => typeof id === "string" && mongoose.Types.ObjectId.isValid(id));
+		// }
 		// Note: For simplicity, this update does not re-calculate distance, duration, or simplifiedRoute.
 		// If segments or POIs were to be updated, those would need more complex handling similar to createTripJson.
 

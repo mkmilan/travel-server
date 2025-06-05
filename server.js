@@ -70,7 +70,7 @@ app.use(cors(corsOptions));
 // app.options("*", cors(corsOptions));
 
 // Enable JSON body parsing
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
 
 // CSRF Protection Setup
@@ -167,10 +167,7 @@ app.use((err, req, res, next) => {
 			origin: req.headers.origin,
 			referer: req.headers.referer,
 			cookiesSent: req.cookies, // Cookies received by server
-			csrfTokenInHeader:
-				req.headers["x-csrf-token"] ||
-				req.headers["xsrf-token"] ||
-				req.headers["x-xsrf-token"],
+			csrfTokenInHeader: req.headers["x-csrf-token"] || req.headers["xsrf-token"] || req.headers["x-xsrf-token"],
 			bodyCsrfToken: req.body && req.body._csrf, // If sent in body
 		});
 		res.status(403).json({
@@ -185,13 +182,7 @@ app.use(errorHandler);
 // --- Start Server ---
 const PORT = process.env.PORT || 5001; // Use PORT from .env or default
 
-app.listen(PORT, () =>
-	console.log(
-		`Server running in ${
-			process.env.NODE_ENV || "development"
-		} mode on port ${PORT}`
-	)
-);
+app.listen(PORT, () => console.log(`Server running in ${process.env.NODE_ENV || "development"} mode on port ${PORT}`));
 
 // --- Handle Unhandled Promise Rejections ---
 process.on("unhandledRejection", (err, promise) => {

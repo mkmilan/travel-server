@@ -2,6 +2,9 @@ const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const User = require("../models/User");
 const Trip = require("../models/Trip");
+const storageService = require("../services/storageService");
+const sharp = require("sharp");
+const path = require("path");
 
 /**
  * @desc    Processes an array of pending recommendation data from a JSON payload
@@ -72,11 +75,39 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 				primaryCategory = "OTHER";
 			}
 
-			// Assuming photo handling for JSON means photo IDs or URLs are passed, not raw files.
-			// If `recData.photos` contains an array of pre-uploaded photo IDs:
-			const photoIds = Array.isArray(recData.photoIds)
-				? recData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
-				: [];
+			// Handle photo IDs intelligently - check if updating existing recommendation
+			let finalPhotoIds = [];
+			if (recData.id && mongoose.Types.ObjectId.isValid(recData.id)) {
+				// This might be an update to existing recommendation
+				const existingRec = await Recommendation.findById(recData.id).select("photos");
+				if (existingRec) {
+					const existingPhotoIds = existingRec.photos || [];
+					const existingPhotoIdStrings = existingPhotoIds.map((id) => id.toString());
+
+					// Validate new photo IDs
+					const newPhotoIds = Array.isArray(recData.photoIds)
+						? recData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
+						: [];
+
+					if (recData.photoAction === "replace") {
+						finalPhotoIds = newPhotoIds;
+					} else {
+						// Merge: add new photos that don't already exist
+						const uniqueNewPhotoIds = newPhotoIds.filter((id) => !existingPhotoIdStrings.includes(id.toString()));
+						finalPhotoIds = [...existingPhotoIds, ...uniqueNewPhotoIds];
+					}
+				} else {
+					// ID provided but recommendation doesn't exist, treat as new
+					finalPhotoIds = Array.isArray(recData.photoIds)
+						? recData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
+						: [];
+				}
+			} else {
+				// New recommendation
+				finalPhotoIds = Array.isArray(recData.photoIds)
+					? recData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
+					: [];
+			}
 
 			const recommendationToSave = {
 				user: userId,
@@ -89,7 +120,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 					type: "Point",
 					coordinates: [lon, lat], // [longitude, latitude]
 				},
-				photos: photoIds, // Use validated photo IDs
+				photos: finalPhotoIds, // Use intelligently processed photo IDs
 				associatedTrip: tripId,
 				// associatedPoiId: recData.associatedPoiId && mongoose.Types.ObjectId.isValid(recData.associatedPoiId) ? recData.associatedPoiId : null,
 				source: recData.source || "TRACKING", // More specific source
@@ -139,6 +170,50 @@ const createSingleRecommendationJson = async (req, res, next) => {
 			});
 		}
 
+		// Handle photo IDs intelligently - check if this is an update to existing recommendation
+		let finalPhotoIds = [];
+		if (recommendationData.id && mongoose.Types.ObjectId.isValid(recommendationData.id)) {
+			// This might be an update to existing recommendation
+			const existingRec = await Recommendation.findById(recommendationData.id).select("photos user");
+			if (existingRec) {
+				// Verify user owns this recommendation
+				if (existingRec.user.toString() !== userId.toString()) {
+					return res.status(403).json({ message: "Not authorized to update this recommendation." });
+				}
+
+				const existingPhotoIds = existingRec.photos || [];
+				const existingPhotoIdStrings = existingPhotoIds.map((id) => id.toString());
+
+				// Validate new photo IDs
+				const newPhotoIds = Array.isArray(recommendationData.photoIds)
+					? recommendationData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
+					: [];
+
+				if (recommendationData.photoAction === "replace") {
+					finalPhotoIds = newPhotoIds;
+				} else {
+					// Merge: add new photos that don't already exist
+					const uniqueNewPhotoIds = newPhotoIds.filter((id) => !existingPhotoIdStrings.includes(id.toString()));
+					finalPhotoIds = [...existingPhotoIds, ...uniqueNewPhotoIds];
+				}
+
+				// Add photoIds to the data that will be processed
+				recommendationData.photoIds = finalPhotoIds;
+			} else {
+				// ID provided but recommendation doesn't exist, treat as new
+				finalPhotoIds = Array.isArray(recommendationData.photoIds)
+					? recommendationData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
+					: [];
+				recommendationData.photoIds = finalPhotoIds;
+			}
+		} else {
+			// New recommendation - just validate provided photo IDs
+			finalPhotoIds = Array.isArray(recommendationData.photoIds)
+				? recommendationData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
+				: [];
+			recommendationData.photoIds = finalPhotoIds;
+		}
+
 		// Call processPendingRecommendations with an array containing the single recommendation
 		const creationResults = await processPendingRecommendations(
 			[recommendationData], // Pass as an array
@@ -151,12 +226,16 @@ const createSingleRecommendationJson = async (req, res, next) => {
 		}
 
 		const result = creationResults[0];
+		console.log(`createSingleRecommendationJson: result for recommendation ${JSON.stringify(result)}`);
+
 		if (result.status === "created" && result.id) {
 			const newRecommendation = await Recommendation.findById(result.id);
 			if (!newRecommendation) {
 				// Should not happen if status is 'created' and id is present
 				return res.status(404).json({ message: "Newly created recommendation not found." });
 			}
+			console.log(`createSingleRecommendationJson: Successfully created recommendation '${newRecommendation}'`);
+
 			return res.status(201).json(newRecommendation);
 		} else {
 			return res.status(400).json({ message: result.error || "Failed to create recommendation." });
@@ -231,21 +310,53 @@ const updateRecommendationJson = async (req, res, next) => {
 			});
 		}
 
-		// Assuming photoIds are passed for JSON updates, similar to creation
+		// Handle photo updates more intelligently
 		if (updateData.photoIds !== undefined) {
 			if (!Array.isArray(updateData.photoIds)) {
 				return res.status(400).json({ message: "photoIds must be an array." });
 			}
-			// Assuming photoIds are ObjectIds. If they are URLs, adjust validation.
-			recommendation.photos = updateData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+			// Validate all provided photo IDs
+			const validPhotoIds = updateData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+			// Check if this is an explicit replacement or addition
+			if (updateData.photoAction === "replace") {
+				// Explicit replacement - replace entire array
+				recommendation.photos = validPhotoIds;
+			} else {
+				// Default behavior: merge with existing photos (avoid duplicates)
+				const existingPhotoIds = recommendation.photos || [];
+				const existingPhotoIdStrings = existingPhotoIds.map((id) => id.toString());
+
+				// Only add photos that don't already exist
+				const newPhotoIds = validPhotoIds.filter((id) => !existingPhotoIdStrings.includes(id.toString()));
+
+				if (newPhotoIds.length > 0) {
+					recommendation.photos = [...existingPhotoIds, ...newPhotoIds];
+				}
+				// If no new photos to add, leave existing photos unchanged
+			}
 		} else if (updateData.photos !== undefined) {
-			// Fallback if 'photos' is sent
+			// Fallback if 'photos' is sent - same logic as above
 			if (!Array.isArray(updateData.photos)) {
 				return res.status(400).json({
 					message: "photos must be an array of valid photo identifiers.",
 				});
 			}
-			recommendation.photos = updateData.photos.filter((id) => mongoose.Types.ObjectId.isValid(id)); // Or handle as URLs if applicable
+
+			const validPhotoIds = updateData.photos.filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+			if (updateData.photoAction === "replace") {
+				recommendation.photos = validPhotoIds;
+			} else {
+				const existingPhotoIds = recommendation.photos || [];
+				const existingPhotoIdStrings = existingPhotoIds.map((id) => id.toString());
+				const newPhotoIds = validPhotoIds.filter((id) => !existingPhotoIdStrings.includes(id.toString()));
+
+				if (newPhotoIds.length > 0) {
+					recommendation.photos = [...existingPhotoIds, ...newPhotoIds];
+				}
+			}
 		}
 
 		if (updateData.associatedTrip !== undefined) {
@@ -265,6 +376,7 @@ const updateRecommendationJson = async (req, res, next) => {
 		}
 
 		const updatedRecommendation = await recommendation.save();
+
 		res.status(200).json(updatedRecommendation);
 	} catch (error) {
 		console.error("Error in updateRecommendationJson:", error);
@@ -274,7 +386,6 @@ const updateRecommendationJson = async (req, res, next) => {
 		if (!res.headersSent) {
 			res.status(500).json({ message: "Server error while updating recommendation." });
 		}
-		// Consider calling next(error)
 	}
 };
 
@@ -429,9 +540,127 @@ const getUserRecommendationsJson = async (req, res, next) => {
 	}
 };
 
+const uploadRecommendationPhotos = async (req, res, next) => {
+	const { recommendationId } = req.params;
+	const userId = req.user._id;
+
+	if (!mongoose.Types.ObjectId.isValid(recommendationId))
+		return res.status(400).json({ message: "Invalid recommendation ID" });
+
+	if (!req.files?.length) return res.status(400).json({ message: "No photo files were uploaded" });
+
+	/* --- authorisation -------------------------------------------------- */
+	const recommendation = await Recommendation.findById(recommendationId).select("_id user photos");
+	if (!recommendation) return res.status(404).json({ message: "Recommendation not found" });
+
+	if (recommendation.user.toString() !== userId.toString()) return res.status(403).json({ message: "Not authorised" });
+
+	/* --- process & store each file ------------------------------------- */
+	try {
+		const uploadedIds = await Promise.all(
+			req.files.map(async (file) => {
+				/* ▸  keep aspect ratio – resize only if necessary             */
+				const { data, info } = await sharp(file.buffer)
+					.rotate()
+					.resize({
+						width: 1920,
+						height: 1920,
+						fit: sharp.fit.inside,
+						withoutEnlargement: true,
+					})
+					.webp({ quality: 75, effort: 4 })
+					.toBuffer({ resolveWithObject: true });
+
+				const nameBase = path.parse(file.originalname).name;
+				const storedName = `rec_${recommendationId}_${nameBase}_${Date.now()}.webp`;
+
+				return await storageService.uploadFile(data, storedName, "image/webp", {
+					userId: userId.toString(),
+					recId: recommendationId,
+					originalFilename: file.originalname,
+					mimetype: "image/webp",
+					size: info.size,
+					width: info.width,
+					height: info.height,
+				});
+			})
+		);
+
+		recommendation.photos.push(...uploadedIds);
+		await recommendation.save();
+		// console.log(`uploadRecommendationPhotos: recommendation ${recommendation} `);
+		res.status(200).json({ message: "Photos uploaded", photoIds: uploadedIds });
+	} catch (err) {
+		console.error("uploadRecommendationPhotos:", err);
+		next(err);
+	}
+};
+
+/**
+ * @desc    Delete a specific photo associated with a recommendation
+ * @route   DELETE /api/v2/recommendations/:recommendationId/photos/:photoId
+ * @access  Private (Owner Only)
+ */
+const deleteRecommendationPhoto = async (req, res, next) => {
+	const { recommendationId, photoId } = req.params;
+	const userId = req.user._id;
+
+	// Validate IDs
+	if (!mongoose.Types.ObjectId.isValid(recommendationId)) {
+		return res.status(400).json({ message: "Invalid recommendation ID" });
+	}
+	if (!mongoose.Types.ObjectId.isValid(photoId)) {
+		return res.status(400).json({ message: "Invalid photo ID" });
+	}
+
+	try {
+		// Find the recommendation
+		const recommendation = await Recommendation.findById(recommendationId).select("user photos");
+
+		if (!recommendation) {
+			return res.status(404).json({ message: "Recommendation not found" });
+		}
+
+		// Authorization check - only the owner can delete photos
+		if (recommendation.user.toString() !== userId.toString()) {
+			return res.status(403).json({ message: "Not authorized to delete photos from this recommendation" });
+		}
+
+		// Check if the photo exists in the recommendation's photos array
+		const photoExists = recommendation.photos.some((id) => id.toString() === photoId);
+		if (!photoExists) {
+			return res.status(404).json({ message: "Photo not found in this recommendation" });
+		}
+
+		// Delete the file from storage (GridFS)
+		try {
+			await storageService.deleteFile(photoId);
+			console.log(`Deleted photo file ${photoId} from storage`);
+		} catch (storageError) {
+			console.warn(`Failed to delete photo file ${photoId} from storage:`, storageError.message);
+			// Continue with database cleanup even if storage deletion fails
+		}
+
+		// Remove the photo ID from the recommendation's photos array
+		recommendation.photos = recommendation.photos.filter((id) => id.toString() !== photoId);
+		await recommendation.save();
+
+		console.log(`Removed photo ${photoId} from recommendation ${recommendationId}`);
+		res.status(200).json({
+			message: "Photo deleted successfully",
+			photosCount: recommendation.photos.length,
+		});
+	} catch (error) {
+		console.error(`Error deleting photo ${photoId} from recommendation ${recommendationId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	processPendingRecommendations,
 	createSingleRecommendationJson,
 	updateRecommendationJson,
 	getUserRecommendationsJson, // Add new export
+	uploadRecommendationPhotos,
+	deleteRecommendationPhoto, // Add new export
 };
