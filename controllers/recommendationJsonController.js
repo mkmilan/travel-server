@@ -656,6 +656,73 @@ const deleteRecommendationPhoto = async (req, res, next) => {
 	}
 };
 
+/**
+ * @desc    Delete a recommendation and all associated data (photos, etc.)
+ * @route   DELETE /api/v2/recommendations/:recommendationId
+ * @access  Private (Owner Only)
+ */
+const deleteRecommendationJson = async (req, res, next) => {
+	const { recommendationId } = req.params;
+	const userId = req.user._id;
+
+	// Validate ObjectId format
+	if (!mongoose.Types.ObjectId.isValid(recommendationId)) {
+		return res.status(400).json({ message: `Invalid Recommendation ID format: ${recommendationId}` });
+	}
+
+	try {
+		// Find the recommendation to check ownership and get photos for cleanup
+		const recommendation = await Recommendation.findById(recommendationId).select("_id user photos");
+
+		if (!recommendation) {
+			// Return 204 if already deleted (idempotent)
+			return res.status(204).send();
+		}
+
+		// Authorization check - only the owner can delete
+		if (recommendation.user.toString() !== userId.toString()) {
+			return res.status(403).json({ message: "User not authorized to delete this recommendation" });
+		}
+
+		// 1. Delete associated photos if they exist
+		if (recommendation.photos && recommendation.photos.length > 0) {
+			console.log(`Deleting ${recommendation.photos.length} photos for recommendation ${recommendationId}`);
+
+			const photoDeletionPromises = recommendation.photos.map(async (photoId) => {
+				try {
+					await storageService.deleteFile(photoId);
+					console.log(`Deleted photo file ${photoId} for recommendation ${recommendationId}`);
+				} catch (deleteError) {
+					// Log the error but don't fail the entire operation
+					console.warn(
+						`Failed to delete photo file ${photoId} for recommendation ${recommendationId}:`,
+						deleteError.message
+					);
+				}
+			});
+
+			// Wait for all photo deletions to attempt completion
+			await Promise.all(photoDeletionPromises);
+		}
+
+		// 2. Delete the recommendation document
+		await Recommendation.deleteOne({ _id: recommendationId });
+
+		console.log(
+			`Successfully deleted recommendation ${recommendationId} and ${
+				recommendation.photos?.length || 0
+			} associated photos`
+		);
+		res.status(200).json({
+			message: "Recommendation deleted successfully",
+			deletedPhotosCount: recommendation.photos?.length || 0,
+		});
+	} catch (error) {
+		console.error(`Error deleting recommendation ${recommendationId}:`, error);
+		next(error);
+	}
+};
+
 module.exports = {
 	processPendingRecommendations,
 	createSingleRecommendationJson,
@@ -663,4 +730,5 @@ module.exports = {
 	getUserRecommendationsJson, // Add new export
 	uploadRecommendationPhotos,
 	deleteRecommendationPhoto, // Add new export
+	deleteRecommendationJson, // Add new export
 };

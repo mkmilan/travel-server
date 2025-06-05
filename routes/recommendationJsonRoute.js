@@ -10,6 +10,7 @@ const {
 	getUserRecommendationsJson,
 	uploadRecommendationPhotos,
 	deleteRecommendationPhoto,
+	deleteRecommendationJson,
 	// Add getRecommendationJsonById, deleteRecommendationJson if you create them
 } = require("../controllers/recommendationJsonController");
 const { getRecommendationById } = require("../controllers/recommendationController"); // Assuming this can serve JSON
@@ -24,6 +25,7 @@ router.get("/:recommendationId", getRecommendationById); // This might need prot
 router.get("/user/:userId", protectOptional, getUserRecommendationsJson);
 
 router.put("/:recommendationId", protect, updateRecommendationJson); // Changed path to /:recommendationId
+router.delete("/:recommendationId", protect, deleteRecommendationJson);
 
 //  /api/v2/recommendations/:recommendationId/photos
 router.post("/:recommendationId/photos", protect, uploadMultiplePhotos, uploadRecommendationPhotos);
