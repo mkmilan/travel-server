@@ -1,6 +1,7 @@
 // server/controllers/userController.js
 const User = require("../models/User");
 const Trip = require("../models/Trip");
+const Follow = require("../models/Follow");
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const storageService = require("../services/storageService");
@@ -850,6 +851,134 @@ const updateUserSettings = async (req, res, next) => {
 	}
 };
 
+/**
+ * POST /api/users/:userId/follow
+ */
+const followUserV2 = async (req, res, next) => {
+	const followerId = req.user._id;
+	const followeeId = req.params.userId;
+
+	if (followerId.equals(followeeId)) {
+		return res.status(400).json({ message: "You cannot follow yourself" });
+	}
+
+	const session = await mongoose.startSession();
+	session.startTransaction();
+	try {
+		// Create the edge – will throw on duplicate because of the unique index
+		await Follow.create([{ follower: followerId, followee: followeeId }], { session });
+
+		// Bump cached counters
+		await Promise.all([
+			User.updateOne({ _id: followerId }, { $inc: { followingCount: 1 } }, { session }),
+			User.updateOne({ _id: followeeId }, { $inc: { followersCount: 1 } }, { session }),
+		]);
+
+		await session.commitTransaction();
+		res.status(200).json({ message: "Followed" });
+	} catch (err) {
+		await session.abortTransaction();
+		if (err.code === 11000) return res.status(400).json({ message: "Already following" });
+		next(err);
+	} finally {
+		session.endSession();
+	}
+};
+
+/**
+ * DELETE /api/users/:userId/follow
+ */
+const unfollowUserV2 = async (req, res, next) => {
+	const followerId = req.user._id;
+	const followeeId = req.params.userId;
+
+	const session = await mongoose.startSession();
+	session.startTransaction();
+	try {
+		const deleted = await Follow.findOneAndDelete({ follower: followerId, followee: followeeId }, { session });
+		if (!deleted) {
+			await session.abortTransaction();
+			return res.status(404).json({ message: "Not following" });
+		}
+
+		await Promise.all([
+			User.updateOne({ _id: followerId }, { $inc: { followingCount: -1 } }, { session }),
+			User.updateOne({ _id: followeeId }, { $inc: { followersCount: -1 } }, { session }),
+		]);
+
+		await session.commitTransaction();
+		res.status(200).json({ message: "Unfollowed" });
+	} catch (err) {
+		await session.abortTransaction();
+		next(err);
+	} finally {
+		session.endSession();
+	}
+};
+
+/**
+ * GET /api/users/:userId/followers
+ */
+const getUserFollowersV2 = async (req, res, next) => {
+	const { userId } = req.params;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 15;
+	const skip = (page - 1) * limit;
+
+	const pipeline = [
+		{ $match: { followee: new mongoose.Types.ObjectId(userId) } },
+		{
+			$lookup: {
+				from: "users",
+				localField: "follower",
+				foreignField: "_id",
+				as: "user",
+			},
+		},
+		{ $unwind: "$user" },
+		{ $replaceRoot: { newRoot: "$user" } },
+		{ $sort: { username: 1 } },
+		{ $skip: skip },
+		{ $limit: limit },
+	];
+
+	const [items, total] = await Promise.all([Follow.aggregate(pipeline), Follow.countDocuments({ followee: userId })]);
+
+	res.json({ data: items, total });
+};
+
+/**
+ * GET /api/users/:userId/following
+ *   – the same as above but swap match field to `follower: userId`
+ */
+const getUserFollowingV2 = async (req, res, next) => {
+	const { userId } = req.params;
+	const page = parseInt(req.query.page) || 1;
+	const limit = parseInt(req.query.limit) || 15;
+	const skip = (page - 1) * limit;
+
+	const pipeline = [
+		{ $match: { follower: new mongoose.Types.ObjectId(userId) } },
+		{
+			$lookup: {
+				from: "users",
+				localField: "followee",
+				foreignField: "_id",
+				as: "user",
+			},
+		},
+		{ $unwind: "$user" },
+		{ $replaceRoot: { newRoot: "$user" } },
+		{ $sort: { username: 1 } },
+		{ $skip: skip },
+		{ $limit: limit },
+	];
+
+	const [items, total] = await Promise.all([Follow.aggregate(pipeline), Follow.countDocuments({ follower: userId })]);
+
+	res.json({ data: items, total });
+};
+
 module.exports = {
 	getUserProfileById,
 	getPublicProfileByUserId,
@@ -864,4 +993,8 @@ module.exports = {
 	getUserPhotos,
 	getUserSettings,
 	updateUserSettings,
+	followUserV2,
+	unfollowUserV2,
+	getUserFollowersV2,
+	getUserFollowingV2,
 };

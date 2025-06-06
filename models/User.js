@@ -58,6 +58,8 @@ const userSchema = new mongoose.Schema(
 			maxlength: [160, "Bio cannot be more than 160 characters"],
 			default: "",
 		},
+		// followersCount: { type: Number, default: 0 },
+		// followingCount: { type: Number, default: 0 },
 		// Array of User ObjectIds that this user follows
 		following: [
 			{
@@ -80,15 +82,7 @@ const userSchema = new mongoose.Schema(
 			},
 			defaultTravelMode: {
 				type: String,
-				enum: [
-					"motorhome",
-					"campervan",
-					"car",
-					"motorcycle",
-					"bicycle",
-					"walking",
-					"",
-				], // Added "" for unset
+				enum: ["motorhome", "campervan", "car", "motorcycle", "bicycle", "walking", ""], // Added "" for unset
 				default: "motorhome",
 			},
 			preferredUnits: {

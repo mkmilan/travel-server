@@ -13,6 +13,9 @@ const {
 	getUserSettings,
 	updateUserSettings,
 	getPublicProfileByUserId,
+	followUserV2,
+	unfollowUserV2,
+	getUserFollowersV2,
 } = require("../controllers/userController");
 const { protect, protectOptional } = require("../middleware/authMiddleware");
 const { uploadSinglePhoto } = require("../config/multerConfig");
@@ -37,5 +40,10 @@ router.get("/:userId/pois", getUserPois);
 router.get("/:userId/followers", getUserFollowers);
 router.get("/:userId/following", getUserFollowing);
 router.get("/:userId/photos", getUserPhotos);
+
+//v2 for following and followers
+router.post("/v2/users/:userId/follow", protect, followUserV2);
+router.delete("/v2/users/:userId/follow", protect, unfollowUserV2);
+router.get("/v2/users/:userId/followers", protectOptional, getUserFollowersV2);
 
 module.exports = router;

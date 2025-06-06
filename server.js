@@ -116,6 +116,7 @@ app.use("/api/search", require("./routes/searchRoutes"));
 app.use("/api/suggestions", require("./routes/suggestionRoutes"));
 app.use("/api/v2/trips", require("./routes/tripJsonRoutes")); // New route for JSON trips
 app.use("/api/v2/recommendations", require("./routes/recommendationJsonRoute"));
+app.use("/api/v2/search", require("./routes/searchJsonRoutes"));
 
 // --- Custom Error Handling Middleware ---
 const errorHandler = (err, req, res, next) => {
