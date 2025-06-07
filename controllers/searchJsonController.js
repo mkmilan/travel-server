@@ -1,92 +1,3 @@
-// // --- searchJsonController.js ---
-// // NOTE: identical naming style but with “Json” suffix so old controller keeps working.
-
-// const User = require("../models/User");
-// const Trip = require("../models/Trip");
-// const Recommendation = require("../models/Recommendation");
-// // ─────────────────────────────────────────────────────────────────────────────
-// // GET /api/search-json?q=&type=&page=&limit=
-// //
-// // • Supports type = users | trips | recommendations
-// // • Pagination: default page=1, limit=20   (Pass ?page=2 to load more.)
-// // • Visibility:    - public   → everyone
-// //                   - followers_only → requester must be in author's followers[]
-// //                   - private  → only owner
-// //   Uses User.followers array  (no Follow model required)
-// // ─────────────────────────────────────────────────────────────────────────────
-
-// // GET /api/search-json?q=&type=
-// const performSearchJson = async (req, res, next) => {
-// 	const { q, type } = req.query;
-// 	const loggedInUserId = req.user?._id;
-
-// 	if (!q || typeof q !== "string" || q.trim().length < 2) {
-// 		return res.status(400).json({ message: "Query must be ≥ 2 chars." });
-// 	}
-// 	if (!type || !["users", "trips", "recommendations"].includes(type)) {
-// 		return res.status(400).json({ message: "Invalid search type." });
-// 	}
-
-// 	const term = q.trim();
-// 	const rx = new RegExp(term, "i"); // case-insensitive partial
-// 	let results = [];
-
-// 	try {
-// 		switch (type) {
-// 			case "users":
-// 				results = await User.find({
-// 					username: rx,
-// 					_id: { $ne: loggedInUserId },
-// 				}).select("_id username profilePictureUrl");
-// 				break;
-
-// 			case "trips": // ← JSON-only
-// 				results = await Trip.find({
-// 					format: "json", // NEW line
-// 					$or: [
-// 						{ title: rx },
-// 						{ description: rx },
-// 						{ startLocationName: rx },
-// 						{ endLocationName: rx },
-// 						// { "tags.label": rx }, // if you store tags
-// 					],
-// 				})
-// 					.select(
-// 						"_id title description likes comments" +
-// 							"distanceKm durationMillis elevationGain " +
-// 							"startDate endDate startLocationName endLocationName " +
-// 							"  defaultTripVisibility" +
-// 							"geoPreview lineString defaultTravelMode" +
-// 							"distanceMeters simplifiedRoute  "
-// 					)
-// 					.populate("user", "_id username profilePictureUrl")
-// 					.lean();
-// 				break;
-
-// 			case "recommendations":
-// 				// match category *or* name; fallback: partial
-// 				results = await Recommendation.find({
-// 					$or: [
-// 						{ primaryCategory: new RegExp(`^${term}$`, "i") }, // exact category
-// 						{ name: rx },
-// 					],
-// 				})
-// 					.select(
-// 						"_id name user primaryCategory rating location coverPhotoUrl images averagePrice likesCount secondaryCategories tags"
-// 					)
-// 					.populate("user", "_id username profilePictureUrl")
-// 					.lean();
-// 				break;
-// 		}
-// 		console.log("Search results:", results);
-
-// 		res.status(200).json(results);
-// 	} catch (err) {
-// 		console.error("JSON search error:", err);
-// 		next(err);
-// 	}
-// };
-
 // module.exports = { performSearchJson };
 // server/controllers/searchJsonController.js
 const User = require("../models/User");
@@ -218,4 +129,48 @@ const performSearchJson = async (req, res, next) => {
 	}
 };
 
-module.exports = { performSearchJson };
+/**
+ * GET /api/search-users?q=&page=&limit=
+ * • Multi-token fuzzy search on username and displayName
+ * • Pagination (default 20, cap 50)  – newest users first
+ */
+const searchUsers = async (req, res, next) => {
+	const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	try {
+		const { q = "", page = 1, limit = 20 } = req.query;
+		if (q.trim().length < 2) return res.status(400).json({ message: "Query must be ≥ 2 chars." });
+
+		const PAGE = Math.max(1, +page);
+		const LIM = Math.min(50, Math.max(1, +limit));
+
+		// Split on whitespace – each token must match either field
+		// const tokens = q.trim().split(/\s+/);
+		const tokens = q
+			.trim()
+			.split(/\s+/)
+			.filter((t) => t.length >= 2);
+		// const andClauses = tokens.map((t) => ({ username: new RegExp(t, "i") }));
+		// each token must match username at word-start (\btoken)
+		// const andClauses = tokens.map((tok) => ({
+		// 	username: { $regex: "\\b" + escapeRegex(tok), $options: "i" },
+		// }));
+		const orClauses = tokens.map((tok) => ({
+			username: { $regex: "\\b" + escapeRegex(tok), $options: "i" },
+		}));
+
+		// const users = await User.find({ $and: andClauses })
+		const users = await User.find({ $and: orClauses })
+			.sort({ createdAt: -1 })
+			.skip((PAGE - 1) * LIM)
+			.limit(LIM)
+			.select("_id username  profilePictureUrl")
+			.lean();
+
+		res.json(users);
+	} catch (err) {
+		console.error("User search error:", err);
+		next(err);
+	}
+};
+
+module.exports = { performSearchJson, searchUsers };

@@ -14,9 +14,7 @@ const performSearch = async (req, res, next) => {
 
 	// --- Input Validation ---
 	if (!query || typeof query !== "string" || query.trim().length < 2) {
-		return res
-			.status(400)
-			.json({ message: "Search query must be at least 2 characters long." });
+		return res.status(400).json({ message: "Search query must be at least 2 characters long." });
 	}
 	if (!type || !["users", "trips", "recommendations"].includes(type)) {
 		return res.status(400).json({ message: "Invalid search type specified." });
