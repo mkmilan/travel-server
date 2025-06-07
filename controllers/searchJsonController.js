@@ -163,10 +163,11 @@ const searchUsers = async (req, res, next) => {
 			.sort({ createdAt: -1 })
 			.skip((PAGE - 1) * LIM)
 			.limit(LIM)
-			.select("_id username  profilePictureUrl")
+			.select("_id username  profilePictureUrl city country")
 			.lean();
 
 		res.json(users);
+		console.log("USER", users);
 	} catch (err) {
 		console.error("User search error:", err);
 		next(err);
