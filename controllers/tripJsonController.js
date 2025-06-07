@@ -100,7 +100,9 @@ exports.createTripJson = async (req, res, next) => {
 		}
 		// --- End Recommendation Processing ---
 
-		const populatedTrip = await Trip.findById(savedTrip._id).populate("user", "username profilePictureUrl").lean();
+		const populatedTrip = await Trip.findById(savedTrip._id)
+			.populate("user", "username profilePictureUrl city country")
+			.lean();
 
 		res.status(201).json({
 			trip: populatedTrip,
@@ -122,7 +124,9 @@ exports.getTripJsonById = async (req, res, next) => {
 	}
 
 	try {
-		const trip = await Trip.findById(tripId).populate("user", "username profilePictureUrl followers").lean(); // Keep .lean() for the main trip object
+		const trip = await Trip.findById(tripId)
+			.populate("user", "username profilePictureUrl followers city country")
+			.lean(); // Keep .lean() for the main trip object
 
 		if (!trip || trip.format !== "json") {
 			return res.status(404).json({ message: "Trip not found or not JSON format" });
@@ -140,7 +144,7 @@ exports.getTripJsonById = async (req, res, next) => {
 			const recommendations = await Recommendation.find({
 				associatedTrip: tripId,
 			})
-				.populate("user", "username profilePictureUrl") // Populate user details for recommendations
+				.populate("user", "username profilePictureUrl city country") // Populate user details for recommendations
 				.lean(); // Use .lean() for recommendations as well
 
 			// Add recommendations to the trip object
@@ -201,7 +205,9 @@ exports.updateTripJson = async (req, res, next) => {
 		// If segments or POIs were to be updated, those would need more complex handling similar to createTripJson.
 
 		const updatedTrip = await trip.save();
-		const populatedTrip = await Trip.findById(updatedTrip._id).populate("user", "username profilePictureUrl").lean();
+		const populatedTrip = await Trip.findById(updatedTrip._id)
+			.populate("user", "username profilePictureUrl city country")
+			.lean();
 
 		res.status(200).json(populatedTrip);
 		console.log("trip update", populatedTrip);
@@ -352,6 +358,8 @@ exports.getTripsFeedJson = async (req, res, next) => {
 						_id: "$userDetails._id",
 						username: "$userDetails.username",
 						profilePictureUrl: "$userDetails.profilePictureUrl",
+						city: "$userDetails.city",
+						country: "$userDetails.country",
 					},
 					startLocationName: 1,
 					endLocationName: 1,
@@ -455,6 +463,8 @@ exports.getUserJsonTrips = async (req, res, next) => {
 						_id: "$userDetails._id",
 						username: "$userDetails.username",
 						profilePictureUrl: "$userDetails.profilePictureUrl",
+						city: "$userDetails.city",
+						country: "$userDetails.country",
 					},
 				},
 			},

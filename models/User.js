@@ -58,6 +58,14 @@ const userSchema = new mongoose.Schema(
 			maxlength: [160, "Bio cannot be more than 160 characters"],
 			default: "",
 		},
+		city: {
+			type: String,
+			default: null,
+		},
+		country: {
+			type: String,
+			default: null,
+		},
 		// followersCount: { type: Number, default: 0 },
 		// followingCount: { type: Number, default: 0 },
 		// Array of User ObjectIds that this user follows

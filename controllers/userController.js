@@ -68,6 +68,8 @@ const getUserProfileById = async (req, res, next) => {
 			_id: user._id,
 			username: user.username,
 			bio: user.bio,
+			city: user.city,
+			country: user.country,
 			profilePictureUrl: user.profilePictureUrl,
 			followersCount: user.followers.length, // Existing count
 			followingCount: user.following.length, // Existing count
@@ -175,7 +177,7 @@ const getPublicProfileByUserId = async (req, res, next) => {
  */
 const updateUserProfile = async (req, res, next) => {
 	const userId = req.user._id;
-	const { username, bio } = req.body;
+	const { username, bio, city, country } = req.body;
 	const file = req.file; // File from uploadSinglePhoto middleware
 
 	try {
@@ -190,6 +192,9 @@ const updateUserProfile = async (req, res, next) => {
 		}
 		// Update bio if provided
 		user.bio = bio !== undefined ? bio.trim() : user.bio;
+		// Update city and country if provided
+		if (city !== undefined) user.city = city;
+		if (country !== undefined) user.country = country;
 
 		// --- Handle Profile Picture Upload ---
 		if (file) {
@@ -301,6 +306,8 @@ const updateUserProfile = async (req, res, next) => {
 			username: updatedUser.username,
 			email: updatedUser.email,
 			bio: updatedUser.bio,
+			city: updatedUser.city,
+			country: updatedUser.country,
 			profilePictureUrl: updatedUser.profilePictureUrl,
 			following: updatedUser.following,
 			followers: updatedUser.followers,
