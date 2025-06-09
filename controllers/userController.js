@@ -986,6 +986,151 @@ const getUserFollowingV2 = async (req, res, next) => {
 	res.json({ data: items, total });
 };
 
+/**
+ * GET /users/:userId/photos        (JSON-trips only)
+ *
+ * Visibility rules
+ *   – Owner           →  public + followers_only + private
+ *   – Follower        →  public + followers_only
+ *   – Stranger        →  public
+ *
+ * Response: array of
+ *   { photoId, context, sourceDate, sourceType, sourceId }
+ */
+const getUserPhotosJson = async (req, res, next) => {
+	const { userId } = req.params;
+	const page = parseInt(req.query.page, 10) || 1;
+	const limit = parseInt(req.query.limit, 10) || 20;
+	const skip = (page - 1) * limit;
+
+	if (!mongoose.Types.ObjectId.isValid(userId)) {
+		return res.status(400).json({ message: "Invalid userId" });
+	}
+
+	try {
+		/* ------------------------------------------------------------------ */
+		/* Who is looking?                                                    */
+		/* ------------------------------------------------------------------ */
+		const viewerId = req.user?._id?.toString() || null;
+		const isOwner = viewerId === userId;
+		let isFollower = false;
+
+		if (!isOwner && viewerId) {
+			isFollower = await User.exists({
+				_id: userId,
+				followers: viewerId,
+			});
+		}
+
+		const allowedVis = isOwner
+			? ["public", "followers_only", "private"]
+			: isFollower
+			? ["public", "followers_only"]
+			: ["public"];
+
+		/* ------------------------------------------------------------------ */
+		/* Aggregation pipeline                                               */
+		/* ------------------------------------------------------------------ */
+		const pipeline = [
+			/* -------------------------------------------------------------- */
+			/* 1. JSON trips for this user that viewer is allowed to see      */
+			/* -------------------------------------------------------------- */
+			{
+				$match: {
+					user: new mongoose.Types.ObjectId(userId),
+					format: "json",
+					...(isOwner ? {} : { defaultTripVisibility: { $in: allowedVis } }),
+				},
+			},
+			{
+				$project: {
+					_id: 1,
+					photos: 1,
+					createdAt: 1,
+					title: 1,
+					defaultTripVisibility: 1,
+				},
+			},
+			{ $unwind: "$photos" },
+			{
+				$project: {
+					_id: 0,
+					photoId: "$photos",
+					sourceDate: "$createdAt",
+					context: { $concat: ["Trip: ", "$title"] },
+					sourceType: { $literal: "trip" },
+					sourceId: "$$ROOT._id",
+				},
+			},
+
+			/* -------------------------------------------------------------- */
+			/* 2. recommendations attached to those same trips                */
+			/* -------------------------------------------------------------- */
+			{
+				$unionWith: {
+					coll: "recommendations",
+					pipeline: [
+						{
+							$match: {
+								user: new mongoose.Types.ObjectId(userId),
+								associatedTrip: { $ne: null },
+								photos: { $exists: true, $ne: [] },
+							},
+						},
+						/* bring in the parent trip's format & visibility */
+						{
+							$lookup: {
+								from: "trips",
+								localField: "associatedTrip",
+								foreignField: "_id",
+								as: "trip",
+							},
+						},
+						{ $unwind: "$trip" }, // drop orphan recs
+						{
+							$match: {
+								"trip.format": "json",
+								...(isOwner ? {} : { "trip.defaultTripVisibility": { $in: allowedVis } }),
+							},
+						},
+						{ $project: { photos: 1, createdAt: 1, name: 1 } },
+						{ $unwind: "$photos" },
+						{
+							$project: {
+								_id: 0,
+								photoId: "$photos",
+								sourceDate: "$createdAt",
+								context: { $concat: ["Recommendation: ", "$name"] },
+								sourceType: { $literal: "recommendation" },
+								sourceId: "$$ROOT._id",
+							},
+						},
+					],
+				},
+			},
+
+			/* -------------------------------------------------------------- */
+			/* 3. sort newest → oldest, then paginate                         */
+			/* -------------------------------------------------------------- */
+			{ $sort: { sourceDate: -1 } },
+			{ $skip: skip },
+			{ $limit: limit },
+		];
+
+		const pageData = await Trip.aggregate(pipeline);
+
+		res.json({
+			page,
+			limit,
+			count: pageData.length,
+			data: pageData,
+		});
+	} catch (err) {
+		console.error("getUserPhotosJson error:", err);
+		next(err);
+	}
+};
+
 module.exports = {
 	getUserProfileById,
 	getPublicProfileByUserId,
@@ -998,6 +1143,7 @@ module.exports = {
 	getUserFollowers,
 	getUserFollowing,
 	getUserPhotos,
+	getUserPhotosJson,
 	getUserSettings,
 	updateUserSettings,
 	followUserV2,

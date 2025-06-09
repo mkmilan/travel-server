@@ -10,6 +10,7 @@ const {
 	getUserFollowers,
 	getUserFollowing,
 	getUserPhotos,
+	getUserPhotosJson,
 	getUserSettings,
 	updateUserSettings,
 	getPublicProfileByUserId,
@@ -40,6 +41,7 @@ router.get("/:userId/pois", getUserPois);
 router.get("/:userId/followers", getUserFollowers);
 router.get("/:userId/following", getUserFollowing);
 router.get("/:userId/photos", getUserPhotos);
+router.get("/v2/:userId/photos", protectOptional, getUserPhotosJson);
 
 //v2 for following and followers
 router.post("/v2/users/:userId/follow", protect, followUserV2);
