@@ -5,7 +5,7 @@ const { performSearchJson, searchUsers } = require("../controllers/searchJsonCon
 const router = express.Router();
 
 // Public endpoint.  Add `protect` middleware if you want it gated later.
-router.get("/", performSearchJson);
+router.get("/", protectOptional, performSearchJson);
 router.get("/users", protectOptional, searchUsers);
 
 module.exports = router;

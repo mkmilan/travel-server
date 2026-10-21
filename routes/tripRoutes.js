@@ -42,16 +42,16 @@ router.post("/:tripId/pois", protect, addPoiToTrip);
 router.post("/:tripId/photos", protect, uploadMultiplePhotos, uploadTripPhotos);
 router.delete("/:tripId/photos/:photoId", protect, deleteTripPhoto);
 
-router.post("/:tripId/comments", protect, addCommentToTrip);
-router.get("/:tripId/comments", getTripComments);
+router.post("/:tripId/comments", protect, mediaAccess.trip, addCommentToTrip);
+router.get("/:tripId/comments", protectOptional, mediaAccess.trip, getTripComments);
 router
 	.route("/:tripId/comments/:commentId")
-	.delete(protect, deleteCommentFromTrip);
-router.post("/:tripId/like", protect, likeTrip);
-router.delete("/:tripId/like", protect, unlikeTrip);
-router.get("/:tripId/likers", getTripLikers);
+	.delete(protect, mediaAccess.trip, deleteCommentFromTrip);
+router.post("/:tripId/like", protect, mediaAccess.trip, likeTrip);
+router.delete("/:tripId/like", protect, mediaAccess.trip, unlikeTrip);
+router.get("/:tripId/likers", protectOptional, mediaAccess.trip, getTripLikers);
 
-router.route("/:tripId/recommendations").get(getRecommendationsForTrip);
+router.route("/:tripId/recommendations").get(protectOptional, mediaAccess.trip, getRecommendationsForTrip);
 
 // --- General Document Route ---
 router.get("/:tripId", protect, getTripById);

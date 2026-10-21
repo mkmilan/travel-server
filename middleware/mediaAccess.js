@@ -15,11 +15,23 @@ function createMediaAccess({ Trip, Recommendation, User, isValidId, getFileMetad
 		.populate("user", "followers");
 
 	return {
+        async trip(req, res, next) {
+            try {
+                if (!isValidId(req.params.tripId)) return res.status(400).json({ message: "Invalid trip ID" });
+                const trip = await tripQuery(Trip.findById(req.params.tripId));
+                if (!canReadTrip(trip, req.user)) return reject(res);
+                req.mediaTrip = trip;
+                res.setHeader("Cache-Control", "private, no-store");
+                return next();
+            } catch (error) { return next(error); }
+        },
 		async tripGpx(req, res, next) {
 			try {
 				if (!isValidId(req.params.tripId)) return res.status(400).json({ message: "Invalid trip ID" });
 				const trip = await tripQuery(Trip.findById(req.params.tripId));
 				if (!trip?.gpxFileRef || !canReadTrip(trip, req.user)) return reject(res);
+				const metadata = await getFileMetadata(trip.gpxFileRef);
+				if (!metadata?.userId || !sameId(metadata.userId, trip.user) || !sameId(metadata.tripId, trip)) return reject(res);
 				req.mediaTrip = trip;
 				res.setHeader("Cache-Control", "private, no-store");
 				return next();

@@ -26,7 +26,7 @@ const router = express.Router();
 router.get("/search", protect, searchUsers);
 router.get("/settings", protect, getUserSettings);
 router.put("/settings", protect, updateUserSettings);
-router.get("/:userId", getUserProfileById);
+router.get("/:userId", protectOptional, getUserProfileById);
 // --- End reorder ---
 //get other user profile by userId
 router.get("/user/:userId", protectOptional, getPublicProfileByUserId);
@@ -36,11 +36,11 @@ router.put("/me", protect, uploadSinglePhoto, updateUserProfile);
 
 router.post("/:userId/follow", protect, followUser);
 router.delete("/:userId/follow", protect, unfollowUser);
-router.get("/:userId/recommendations", getUserRecommendations);
-router.get("/:userId/pois", getUserPois);
+router.get("/:userId/recommendations", protectOptional, getUserRecommendations);
+router.get("/:userId/pois", protectOptional, getUserPois);
 router.get("/:userId/followers", getUserFollowers);
 router.get("/:userId/following", getUserFollowing);
-router.get("/:userId/photos", getUserPhotos);
+router.get("/:userId/photos", protectOptional, getUserPhotos);
 router.get("/v2/:userId/photos", protectOptional, getUserPhotosJson);
 
 //v2 for following and followers

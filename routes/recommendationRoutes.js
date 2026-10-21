@@ -1,6 +1,6 @@
 // filepath: /home/mkmilan/Documents/my/travel-2/server/routes/recommendationRoutes.js
 const express = require("express");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, protectOptional } = require("../middleware/authMiddleware");
 const { uploadMultiplePhotos } = require("../config/multerConfig"); // Use same config as trips for now
 const {
 	createRecommendation,
@@ -21,10 +21,10 @@ router.post(
 );
 
 // GET /api/recommendations - Get/Search recommendations
-router.get("/", getRecommendations); // Public for now, add auth if needed
+router.get("/", protectOptional, getRecommendations); // Public for now, add auth if needed
 
 // GET /api/recommendations/:recommendationId - Get a single recommendation
-router.get("/:recommendationId", getRecommendationById); // Public for now
+router.get("/:recommendationId", protectOptional, getRecommendationById); // Public for now
 
 // TODO: Add PUT /:recommendationId route for updates (protected, owner only)
 // router.put('/:recommendationId', protect, updateRecommendation);

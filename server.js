@@ -2,7 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
-const csrf = require("csurf");
+const csrf = require("@dr.pogodin/csurf").default;
 require("dotenv").config();
 const connectDB = require("./config/db"); // Ensure path is correct
 
@@ -38,8 +38,10 @@ app.use(cookieParser());
 // const csrfProtection = csrf({ cookie: true });
 // CSRF Protection Setup
 const csrfProtection = csrf({
+	// Accept tokens only from the explicit SPA/native header, never query/body fallbacks.
+	value: (req) => req.headers["x-csrf-token"],
 	cookie: {
-		key: "_csrf",
+		key: process.env.NODE_ENV === "production" ? "__Host-travel-csrf" : "_csrf",
 		path: "/",
 		httpOnly: true,
 		secure: process.env.NODE_ENV === "production", // Ensure 'Secure' in production

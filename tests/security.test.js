@@ -36,15 +36,15 @@ test('trip privacy matrix: owner, follower, stranger and anonymous', () => {
 	assert.equal(canReadTrip(null, { _id: owner }), false);
 });
 test('private GPX is blocked before streaming; owner gets authorized trip and no-store', async () => {
-	const access = harness({ associated: trip() });
+	const access = harness({ associated: trip(), metadata: { userId: owner, tripId: file } });
 	for (const user of [null, stranger, follower]) assert.equal((await invoke(access.tripGpx, user)).status, 404);
 	const allowed = await invoke(access.tripGpx, owner);
 	assert.equal(allowed.next, true); assert.equal(allowed.req.mediaTrip.gpxFileRef, file);
 	assert.equal(allowed.headers['Cache-Control'], 'private, no-store');
 });
 test('public GPX stays public, followers-only requires follower, missing/invalid deny', async () => {
-	assert.equal((await invoke(harness({ associated: trip('public') }).tripGpx, null)).next, true);
-	assert.equal((await invoke(harness({ associated: trip('followers_only') }).tripGpx, follower)).next, true);
+	assert.equal((await invoke(harness({ associated: trip('public'), metadata: { userId: owner, tripId: file } }).tripGpx, null)).next, true);
+	assert.equal((await invoke(harness({ associated: trip('followers_only'), metadata: { userId: owner, tripId: file } }).tripGpx, follower)).next, true);
 	assert.equal((await invoke(harness().tripGpx, owner)).status, 404);
 	assert.equal((await invoke(harness().tripGpx, owner, { tripId: 'bad' })).status, 400);
 });
@@ -124,4 +124,21 @@ test('every storage deletion supplies requester, and recommendation writes valid
  const controller = fs.readFileSync('controllers/recommendationJsonController.js', 'utf8');
  assert.match(controller, /await assertOwnedPhotos\(finalPhotoIds, userId\)/);
  assert.match(controller, /await assertOwnedPhotos\(recommendation.photos \|\| \[\], userId\)/);
+});
+
+ test('GPX rejects references with foreign owner, wrong source trip or missing metadata',async()=> {
+  for(const metadata of [null,{userId:stranger,tripId:file},{userId:owner,tripId:stranger}]) {
+   assert.equal((await invoke(harness({associated:trip('public'),metadata}).tripGpx,owner)).status,404);
+  }
+ });
+
+test('trip metadata guard protects all private subresources',async()=> {
+ for(const viewer of [null,stranger,follower]) assert.equal((await invoke(harness({associated:trip()}).trip,viewer)).status,404);
+ assert.equal((await invoke(harness({associated:trip()}).trip,owner)).next,true);
+ for(const method of ['getTripComments','getTripLikers','getRecommendationsForTrip']) assert.match(fs.readFileSync('routes/tripRoutes.js','utf8'),new RegExp('protectOptional, mediaAccess\\.trip, '+method));
+});
+
+test('trip mutations require both authentication and trip visibility',()=> {
+ const source=fs.readFileSync('routes/tripRoutes.js','utf8');
+ for(const method of ['addCommentToTrip','likeTrip','unlikeTrip','deleteCommentFromTrip']) assert.match(source,new RegExp('protect, mediaAccess\\.trip, '+method));
 });

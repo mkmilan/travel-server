@@ -1,5 +1,6 @@
 // filepath: /home/mkmilan/Documents/my/travel-2/server/controllers/recommendationController.js
 const Recommendation = require("../models/Recommendation");
+const { canReadRecommendation, filterReadableRecommendations } = require("../services/recommendationVisibility");
 const storageService = require("../services/storageService"); // For photo uploads
 const mongoose = require("mongoose");
 const path = require("path");
@@ -202,7 +203,7 @@ const getRecommendations = async (req, res, next) => {
 			.limit(20) // Limit results for now
 			.lean();
 
-		res.status(200).json(recommendations);
+		res.status(200).json(await filterReadableRecommendations(recommendations, req.user));
 	} catch (error) {
 		console.error("Error fetching recommendations:", error);
 		next(error);
@@ -220,7 +221,7 @@ const getRecommendationById = async (req, res, next) => {
 		const recommendation = await Recommendation.findById(recommendationId)
 			.populate("user", "username profilePictureUrl")
 			.lean();
-		if (!recommendation) {
+		if (!recommendation || !(await canReadRecommendation(recommendation, req.user))) {
 			res.status(404);
 			return next(new Error("Recommendation not found"));
 		}
@@ -260,7 +261,7 @@ const getRecommendationsForTrip = async (req, res, next) => {
 		//     console.warn(`Recommendations requested for non-existent trip ${tripId}`);
 		// }
 
-		res.status(200).json(recommendations);
+		res.status(200).json(await filterReadableRecommendations(recommendations, req.user));
 	} catch (error) {
 		console.error(`Error fetching recommendations for trip ${tripId}:`, error);
 		next(error);

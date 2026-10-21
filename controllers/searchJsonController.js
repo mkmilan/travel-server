@@ -3,6 +3,8 @@
 const User = require("../models/User");
 const Trip = require("../models/Trip");
 const Recommendation = require("../models/Recommendation");
+const { canReadTrip } = require("../middleware/mediaAccess");
+const { filterReadableRecommendations } = require("../services/recommendationVisibility");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/search-json?q=&type=&page=&limit=
@@ -27,7 +29,8 @@ const performSearchJson = async (req, res, next) => {
 		if (!["users", "trips", "recommendations"].includes(type))
 			return res.status(400).json({ message: "Invalid search type." });
 
-		const rx = new RegExp(q.trim(), "i");
+		const escapedQuery = q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const rx = new RegExp(escapedQuery, "i");
 		let results = [];
 
 		// ───────────────────────────────── USERS
@@ -40,10 +43,6 @@ const performSearchJson = async (req, res, next) => {
 				.lean();
 			return res.json(results);
 		}
-
-		// helper: decide if meId follows author  (relies on followers[])
-		const isFollower = (author) =>
-			meId && Array.isArray(author.followers) ? author.followers.some((f) => String(f) === String(meId)) : false;
 
 		// ───────────────────────────────── TRIPS
 		if (type === "trips") {
@@ -62,14 +61,7 @@ const performSearchJson = async (req, res, next) => {
 				.populate("user", "_id username profilePictureUrl followers") // followers array!
 				.lean();
 
-			results = raw.filter((t) => {
-				const vis = t.defaultTripVisibility || "public";
-				if (vis === "public") return true;
-				if (!meId) return false;
-				if (String(t.user._id) === String(meId)) return true;
-				if (vis === "followers_only") return isFollower(t.user);
-				return false; // private
-			});
+			results = raw.filter(trip => canReadTrip(trip, req.user));
 
 			// map + stats shaping
 			results.forEach((t) => {
@@ -81,7 +73,7 @@ const performSearchJson = async (req, res, next) => {
 				delete t.photos;
 				delete t.likes;
 				delete t.comments;
-				delete t.user.followers; // strip follower list from payload
+				if (t.user) delete t.user.followers; // strip follower list from payload
 			});
 
 			return res.json(results);
@@ -90,35 +82,22 @@ const performSearchJson = async (req, res, next) => {
 		// ───────────────────────────────── RECOMMENDATIONS
 		if (type === "recommendations") {
 			const raw = await Recommendation.find({
-				$or: [{ primaryCategory: new RegExp(`^${q.trim()}$`, "i") }, { name: rx }],
+				$or: [{ primaryCategory: new RegExp(`^${escapedQuery}$`, "i") }, { name: rx }],
 			})
 				.sort({ createdAt: -1 })
 				.skip((PAGE - 1) * LIM)
 				.limit(LIM)
 				.select("_id name description primaryCategory rating location photos " + "attributeTags associatedTrip user")
 				.populate("user", "_id username profilePictureUrl followers")
-				.populate("associatedTrip", "defaultTripVisibility user") // for visibility
 				.lean();
 
-			results = raw.filter((r) => {
-				const tripVis = r.associatedTrip?.defaultTripVisibility || "public";
-				const tripOwner = r.associatedTrip?.user ? String(r.associatedTrip.user) : null;
-
-				if (tripVis === "public") return true;
-				if (!meId) return false;
-				if (tripOwner && tripOwner === String(meId)) return true;
-				if (tripVis === "followers_only" && tripOwner) {
-					// Fetch owner's followers array (already populated on r.user if same author)
-					return isFollower(r.user);
-				}
-				return false;
-			});
+			results = await filterReadableRecommendations(raw, req.user);
 
 			results.forEach((r) => {
 				r.coverPhotoUrl = r.photos?.[0] || null;
 				delete r.photos;
 				delete r.associatedTrip;
-				delete r.user.followers;
+				if (r.user) delete r.user.followers;
 			});
 
 			return res.json(results);

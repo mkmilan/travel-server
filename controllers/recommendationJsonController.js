@@ -462,6 +462,7 @@ const getUserRecommendationsJson = async (req, res, next) => {
 					foreignField: "_id",
 					pipeline: [
 						// Select only necessary fields from the trip
+						{ $match: { user: targetUserId } },
 						{ $project: { defaultTripVisibility: 1 } },
 					],
 					as: "tripInfo",

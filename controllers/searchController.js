@@ -2,6 +2,8 @@
 const User = require("../models/User");
 const Trip = require("../models/Trip");
 const Recommendation = require("../models/Recommendation");
+const { canReadTrip } = require("../middleware/mediaAccess");
+const { filterReadableRecommendations } = require("../services/recommendationVisibility");
 
 /**
  * @desc    Perform search across different models based on type
@@ -21,7 +23,8 @@ const performSearch = async (req, res, next) => {
 	}
 
 	const trimmedQuery = query.trim();
-	const searchTermRegex = new RegExp(trimmedQuery, "i");
+	const escapedQuery = trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const searchTermRegex = new RegExp(escapedQuery, "i");
 
 	try {
 		let results = [];
@@ -43,20 +46,23 @@ const performSearch = async (req, res, next) => {
 						{ endLocationName: searchTermRegex },
 					],
 				})
-					.select("_id title user startDate startLocationName endLocationName") // Select necessary fields
-					.populate("user", "_id username"); // Populate user info
+					.select("_id title user startDate startLocationName endLocationName defaultTripVisibility") // Select necessary fields
+					.populate("user", "_id username followers").lean();
+				results = results.filter(trip => canReadTrip(trip, req.user));
+				results.forEach(trip => { if (trip.user) delete trip.user.followers; }); // Remove authorization-only fields
 				break;
 
 			case "recommendations":
 				// **Updated Logic: Search by primaryCategory (case-insensitive exact match)**
 				// We use regex for case-insensitivity but anchor it to match the whole string.
-				const categoryRegex = new RegExp(`^${trimmedQuery}$`, "i");
+				const categoryRegex = new RegExp(`^${escapedQuery}$`, "i");
 				results = await Recommendation.find({
 					primaryCategory: categoryRegex,
 					// We could add secondary categories later: $or: [{ primaryCategory: categoryRegex }, { secondaryCategories: categoryRegex }]
 				})
-					.select("_id name user primaryCategory rating location") // Select necessary fields
-					.populate("user", "_id username"); // Populate user info
+					.select("_id name user primaryCategory rating location associatedTrip") // Select necessary fields
+					.populate("user", "_id username").lean();
+				results = await filterReadableRecommendations(results, req.user);
 				break;
 
 			default:

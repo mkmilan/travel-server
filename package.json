@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "NODE_ENV=production node server.js",
-    "dev": "NODE_ENV=development nodemon server.js",
+    "dev": "NODE_ENV=development node --watch server.js",
     "test": "node --test tests/*.test.js",
     "test:integration": "node scripts/integration-smoke.cjs"
   },
@@ -14,11 +14,11 @@
   "type": "commonjs",
   "description": "",
   "dependencies": {
+    "@dr.pogodin/csurf": "^1.18.2",
     "@turf/turf": "^7.2.0",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
-    "csurf": "^1.11.0",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "express-validator": "^7.2.1",
@@ -26,13 +26,15 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.13.1",
     "multer": "^2.4.0",
-    "nodemailer": "^7.0.3",
-    "sharp": "^0.34.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.9"
+    "nodemailer": "^10.1.7",
+    "sharp": "^0.35.5"
   },
   "engines": {
-    "node": ">=22 <25"
+    "node": ">=22.12 <25"
+  },
+  "overrides": {
+    "gpx-parse": {
+      "xml2js": "^0.6.2"
+    }
   }
 }

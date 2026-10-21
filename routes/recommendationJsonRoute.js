@@ -20,7 +20,7 @@ const router = express.Router();
 // POST /api/recommendations/json - Create a new recommendation via JSON payload
 router.post("/", protect, createSingleRecommendationJson); // Changed path to /
 
-router.get("/:recommendationId", getRecommendationById); // This might need protectOptional or protect
+router.get("/:recommendationId", protectOptional, getRecommendationById); // This might need protectOptional or protect
 
 router.get("/user/:userId", protectOptional, getUserRecommendationsJson);
 

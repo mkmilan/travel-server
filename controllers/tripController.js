@@ -151,10 +151,12 @@ const createTrip = async (req, res, next) => {
 		// 5. Upload GPX String to Storage (GridFS)
 		console.log("Uploading GPX to storage...");
 
+		const tripId = new mongoose.Types.ObjectId();
 		const filename = `trip_${userId}_${Date.now()}.gpx`; // Create a unique filename
 
 		gpxFileRef = await storageService.uploadFile(gpxString, filename, "application/gpx+xml", {
 			userId: userId.toString(), // Add metadata
+			tripId: tripId.toString(),
 			originalTimestamp: Date.now(),
 		});
 		console.log(`GPX file stored with ref: ${gpxFileRef}`);
@@ -162,6 +164,7 @@ const createTrip = async (req, res, next) => {
 		// 6. Create Trip Document in DB
 		console.log("Creating Trip document in database...");
 		const newTrip = new Trip({
+			_id: tripId,
 			user: userId,
 			title: title || `Trip on ${startDate.toLocaleDateString()}`,
 			description,
@@ -739,10 +742,8 @@ const likeTrip = async (req, res, next) => {
 		);
 
 		if (alreadyLiked) {
-			res.status(400);
-			return;
-			// return next(new Error("You have already liked this trip."));
-		}
+            return res.status(400).json({ message: "You have already liked this trip." });
+        }
 
 		// Add user's ID to the likes array
 		trip.likes.push(userId);

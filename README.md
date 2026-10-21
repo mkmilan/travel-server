@@ -15,10 +15,7 @@ npm test
 The tests use synthetic users/trips and loopback-only HTTP upload fixtures. They
 exercise file visibility, exact CORS matching and Multer parsing/rejection. No
 application server, external geocoder, email sender or production database runs.
-Native dependency installation scripts are deliberately disabled during this
-baseline. Full application startup may need a separately reviewed native bcrypt
-installation; passing these tests is not proof that native dependencies or the
-full app work.
+Install scripts remain disabled for the baseline. Bcrypt 6 ships platform prebuilds; Sharp uses platform packages. Full native compatibility is covered separately by the disposable integration check, not inferred from unit tests.
 
 ## Disposable Mongo integration smoke
 
@@ -35,7 +32,7 @@ uses a temporary database and explicit throwaway fixture signing value, captures
 development email output privately, then stops both processes and removes its
 own temporary database. It never imports SMTP or production settings.
 
-Verified on 2026-10-21 with Node 24 and MongoDB 7.0.24: **22 integration checks
+Verified on 2026-10-21 with Node 24 and MongoDB 7.0.24: **36 integration checks
 passed**, covering actual bcrypt login, registration/email verification in
 no-send development mode, cookie/bearer auth, logout cookies, CSRF/CORS,
 Multer/Sharp/GridFS uploads, public/private/follower photo access, private GPX,
@@ -81,8 +78,7 @@ and external geocoders are **not** covered by the unit/HTTP-fixture test suite.
   and `EXPO_URL` origins. Set all legitimate origins explicitly before deployment.
   Old hardcoded production/LAN origins and prefix matching were removed. Native
   clients without Origin remain supported; CORS is not authentication.
-- CSRF error logs no longer include cookie/token values. Existing CSRF protection
-  is retained; replacing the archived csurf library is a separate reviewed change.
+- CSRF error logs no longer include cookie/token values. CSRF protection now uses maintained `@dr.pogodin/csurf`, preserving the `/api/csrf-token` and `X-CSRF-Token` contract. Tokens are accepted only from that header; production uses a `__Host-` cookie. Existing clients should refresh their CSRF token after upgrading.
 - Multer is upgraded to the patched 2.x line with upload regression tests. Image
   extension and MIME checks are exact, but are not a substitute for image decoding.
 
@@ -91,10 +87,8 @@ and uploads against the disposable database before any device build or release.
 
 ## Remaining review work
 
-This is not a complete security audit or an all-clear. The baseline registry audit
-still reports other dependencies to triage. Recommendation JSON attachments and all storage deletions now validate
-server-written file ownership, including copied references. Public profile
-media/POI metadata still needs a separate privacy review. These fixes do not
+This is not a complete security audit or an all-clear. The locked dependency tree returned zero `npm audit` findings on 2026-10-21 after targeted updates; this is not proof of complete application security. Recommendation JSON attachments and all storage deletions now validate
+server-written file ownership, including copied references. Public profile counts, photo galleries, recommendations and POIs now follow trip visibility; settings are owner-only. These fixes do not
 claim to solve every privacy endpoint. Do not deploy this partial
 phase until those findings and the integration gates above are resolved.
 
@@ -107,3 +101,11 @@ Existing recommendations with unverifiable legacy photo references also fail
 ownership validation on edit (including title-only edits). Repair the ownership
 metadata from trustworthy records, or explicitly remove those photo references,
 before editing; do not automatically assign legacy files to the signed-in user.
+
+## Dependency migration notes (phase two)
+
+- Targeted upgrades retain Express 5, Mongoose 8 and JSON Web Token 9; the lockfile pins patched transitive dependencies.
+- Bcrypt 6, Nodemailer 10 and Sharp 0.35 are intentional security migrations. Password/authentication, image processing and development mail flows are regression-tested. Actual SMTP delivery remains untested and must be verified using an approved staging account before release.
+- `gpx-parse` has no upstream patched XML dependency range. A scoped `xml2js` 0.6.2 override removes the vulnerable parser; track, waypoint, timestamp, malformed XML and prototype-safety fixtures cover compatibility. A future parser replacement should be separately planned.
+- Development uses Node's built-in `--watch`, removing nodemon's obsolete glob dependencies. Use current Node 24 as in `.nvmrc`; Node 22 requires at least 22.12 for CommonJS/ESM interoperability.
+- GPX reads verify both uploader and original trip metadata. Legacy/misattributed file references remain fail-closed pending a trustworthy inventory/migration.

@@ -8,6 +8,7 @@ const storageService = require("../services/storageService");
 const generateToken = require("../utils/generateToken");
 const sharp = require("sharp");
 const path = require("path");
+const { profileVisibility } = require("../services/profileVisibility");
 
 /**
  * @desc    Get user profile by ID
@@ -25,12 +26,13 @@ const getUserProfileById = async (req, res, next) => {
 	}
 
 	try {
+		const { tripMatch, recommendationMatch, isOwner } = await profileVisibility(userId, req.user);
 		// Fetch user and perform aggregations/counts in parallel
 		const [user, tripStats, recommendationCount, poiCountResult] = await Promise.all([
 			User.findById(userId).select("-password -email"), // Exclude sensitive fields
 			Trip.aggregate([
 				// Aggregate total distance and count trips for the user
-				{ $match: { user: new mongoose.Types.ObjectId(userId) } },
+				{ $match: tripMatch },
 				{
 					$group: {
 						_id: null, // Group all trips for the user
@@ -39,11 +41,11 @@ const getUserProfileById = async (req, res, next) => {
 					},
 				},
 			]),
-			Recommendation.countDocuments({ user: userId }),
+			Recommendation.countDocuments(recommendationMatch),
 
 			Trip.aggregate([
 				// Aggregate total POIs for the user
-				{ $match: { user: new mongoose.Types.ObjectId(userId) } },
+				{ $match: tripMatch },
 				{
 					$project: {
 						poiCount: { $size: { $ifNull: ["$pointsOfInterest", []] } },
@@ -73,7 +75,7 @@ const getUserProfileById = async (req, res, next) => {
 			profilePictureUrl: user.profilePictureUrl,
 			followersCount: user.followers.length, // Existing count
 			followingCount: user.following.length, // Existing count
-			settings: user.settings,
+			...(isOwner ? { settings: user.settings } : {}),
 			createdAt: user.createdAt,
 			totalDistance: Math.round(totalDistance), // Round distance to nearest meter
 			totalTrips: totalTrips,
@@ -101,13 +103,14 @@ const getPublicProfileByUserId = async (req, res, next) => {
 	const targetUserId = new mongoose.Types.ObjectId(targetUserIdString);
 
 	try {
+		const { tripMatch, recommendationMatch } = await profileVisibility(targetUserId, req.user);
 		// Fetch user and perform aggregations/counts in parallel
 		const [user, tripStats, recommendationCount, poiCountResult] = await Promise.all([
 			User.findById(targetUserId).select(
 				"-password -email -settings -emailVerificationToken -emailVerificationExpires -passwordResetToken -passwordResetExpires"
 			), // Exclude sensitive fields
 			Trip.aggregate([
-				{ $match: { user: targetUserId } },
+				{ $match: tripMatch },
 				{
 					$group: {
 						_id: null,
@@ -116,9 +119,9 @@ const getPublicProfileByUserId = async (req, res, next) => {
 					},
 				},
 			]),
-			Recommendation.countDocuments({ user: targetUserId }),
+			Recommendation.countDocuments(recommendationMatch),
 			Trip.aggregate([
-				{ $match: { user: targetUserId } },
+				{ $match: tripMatch },
 				{ $project: { poiCount: { $size: { $ifNull: ["$pointsOfInterest", []] } } } },
 				{ $group: { _id: null, totalPois: { $sum: "$poiCount" } } },
 			]),
@@ -495,13 +498,14 @@ const getUserRecommendations = async (req, res, next) => {
 	}
 
 	try {
+		const { recommendationMatch } = await profileVisibility(userId, req.user);
 		const [recommendations, totalCount] = await Promise.all([
-			Recommendation.find({ user: userId })
+			Recommendation.find(recommendationMatch)
 				.select("_id name description rating primaryCategory user createdAt location") // Select fields needed for list display
 				.sort({ createdAt: -1 }) // Sort by newest first
 				.skip(skip)
 				.limit(limit),
-			Recommendation.countDocuments({ user: userId }),
+			Recommendation.countDocuments(recommendationMatch),
 		]);
 
 		res.status(200).json({
@@ -534,9 +538,10 @@ const getUserPois = async (req, res, next) => {
 	}
 
 	try {
+		const { tripMatch } = await profileVisibility(userId, req.user);
 		// Aggregation pipeline to extract and paginate POIs
 		const aggregationPipeline = [
-			{ $match: { user: new mongoose.Types.ObjectId(userId) } }, // Match user's trips
+			{ $match: tripMatch }, // Match user's trips
 			{ $unwind: "$pointsOfInterest" }, // Deconstruct the POI array
 			{ $sort: { "pointsOfInterest.timestamp": -1 } }, // Sort POIs by timestamp (newest first)
 			{
@@ -702,6 +707,7 @@ const getUserPhotos = async (req, res, next) => {
 	}
 
 	try {
+		const { tripMatch, recommendationMatch } = await profileVisibility(userId, req.user);
 		const userObjectId = new mongoose.Types.ObjectId(userId);
 		let allPhotoEntries = [];
 
@@ -722,7 +728,7 @@ const getUserPhotos = async (req, res, next) => {
 		}
 
 		// 2. Get Photos from User's Trips
-		const trips = await Trip.find({ user: userObjectId }).select("photos createdAt title").sort({ createdAt: -1 });
+		const trips = await Trip.find(tripMatch).select("photos createdAt title").sort({ createdAt: -1 });
 
 		trips.forEach((trip) => {
 			trip.photos.forEach((photoId) => {
@@ -740,7 +746,7 @@ const getUserPhotos = async (req, res, next) => {
 		});
 
 		// 3. Get Photos from User's Recommendations
-		const recommendations = await Recommendation.find({ user: userObjectId })
+		const recommendations = await Recommendation.find(recommendationMatch)
 			.select("photos createdAt name")
 			.sort({ createdAt: -1 });
 
@@ -1011,22 +1017,7 @@ const getUserPhotosJson = async (req, res, next) => {
 		/* ------------------------------------------------------------------ */
 		/* Who is looking?                                                    */
 		/* ------------------------------------------------------------------ */
-		const viewerId = req.user?._id?.toString() || null;
-		const isOwner = viewerId === userId;
-		let isFollower = false;
-
-		if (!isOwner && viewerId) {
-			isFollower = await User.exists({
-				_id: userId,
-				followers: viewerId,
-			});
-		}
-
-		const allowedVis = isOwner
-			? ["public", "followers_only", "private"]
-			: isFollower
-			? ["public", "followers_only"]
-			: ["public"];
+		const { tripMatch, isOwner, allowed: allowedVis } = await profileVisibility(userId, req.user);
 
 		/* ------------------------------------------------------------------ */
 		/* Aggregation pipeline                                               */
@@ -1037,9 +1028,8 @@ const getUserPhotosJson = async (req, res, next) => {
 			/* -------------------------------------------------------------- */
 			{
 				$match: {
-					user: new mongoose.Types.ObjectId(userId),
+					...tripMatch,
 					format: "json",
-					...(isOwner ? {} : { defaultTripVisibility: { $in: allowedVis } }),
 				},
 			},
 			{
@@ -1090,6 +1080,7 @@ const getUserPhotosJson = async (req, res, next) => {
 						{
 							$match: {
 								"trip.format": "json",
+								"trip.user": new mongoose.Types.ObjectId(userId),
 								...(isOwner ? {} : { "trip.defaultTripVisibility": { $in: allowedVis } }),
 							},
 						},

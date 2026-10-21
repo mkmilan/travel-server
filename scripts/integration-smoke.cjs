@@ -115,6 +115,63 @@ async function main() {
     await Trip.updateOne({_id:trip._id},{$set:{gpxFileRef:String(gpx.id)}});
     assert.equal((await request(`/trips/${trip.id}/gpx`)).status,404);assert.equal((await request(`/trips/${trip.id}/gpx`,{headers:headers(b)})).status,404);assert.equal((await request(`/trips/${trip.id}/gpx`,{headers:headers(a)})).status,200);check('private GPX access restricted to owner');
     const deleteOwn=await request(`/trips/${trip.id}/photos/${photoId}`,{method:'DELETE',headers:headers(a)});assert.equal(deleteOwn.status,200,await deleteOwn.clone().text());assert.equal(await mongoose.connection.db.collection('gpxUploads.files').findOne({_id:stored._id}),null);check('owner can delete own file');
+    // Public profile metadata must not reveal private trip locations/photos.
+    const poi={name:'Private fixture POI',description:'Synthetic only',location:{type:'Point',coordinates:[4,50]},timestamp:new Date()};
+    await Trip.updateOne({_id:trip._id},{$set:{defaultTripVisibility:'private',pointsOfInterest:[poi]}});
+    for(const endpoint of [`/users/${owner.id}/pois`,`/users/${owner.id}/photos`,`/users/${owner.id}/recommendations`]) {
+      const anonymous=await request(endpoint); assert.equal(anonymous.status,200,await anonymous.clone().text());
+      assert.equal((await anonymous.json()).totalCount,0,endpoint+' must hide private sources');
+    } check('anonymous profile metadata excludes private trips');
+    const ownPois=await request(`/users/${owner.id}/pois`,{headers:headers(a)});assert.equal((await ownPois.json()).totalCount,1);check('owner retains private POI metadata');
+    await Trip.updateOne({_id:trip._id},{$set:{defaultTripVisibility:'followers_only'}});
+    const followerPois=await request(`/users/${owner.id}/pois`,{headers:headers(f)});assert.equal((await followerPois.json()).totalCount,1);
+    const strangerPois=await request(`/users/${owner.id}/pois`,{headers:headers(b)});assert.equal((await strangerPois.json()).totalCount,0);check('profile POI metadata respects followers-only policy');
+    const publicProfile=await request(`/users/${owner.id}`);assert.equal(Object.hasOwn(await publicProfile.json(),'settings'),false);check('public profile omits private settings');
+    const forgedGpxTrip=await Trip.create({user:stranger._id,title:'Forged GPX reference',format:'json',durationMillis:1000,distanceMeters:1,defaultTripVisibility:'public',gpxFileRef:String(gpx.id)});
+    assert.equal((await request(`/trips/${forgedGpxTrip.id}/gpx`)).status,404);check('forged public GPX reference cannot expose another owners file');
+    const gpxXml='<gpx version="1.1"><trk><name>Integration GPX</name><trkseg><trkpt lat="50" lon="4"><time>2026-01-01T00:00:00Z</time></trkpt><trkpt lat="50.1" lon="4.1"><time>2026-01-01T00:01:00Z</time></trkpt></trkseg></trk></gpx>';
+    const gpxCreate=await request('/trips',{method:'POST',headers:{...headers(a),'Content-Type':'application/json'},body:JSON.stringify({title:'Actual parser fixture',gpxString:gpxXml,defaultTripVisibility:'private'})});
+    assert.equal(gpxCreate.status,201,await gpxCreate.clone().text());const createdGpx=await gpxCreate.json();
+    const actualGpx=await request(`/trips/${createdGpx._id}/gpx`,{headers:headers(a)});assert.equal(actualGpx.status,200,await actualGpx.clone().text());assert.equal(await actualGpx.text(),gpxXml);
+    assert.equal((await request(`/trips/${createdGpx._id}/gpx`,{headers:headers(b)})).status,404);check('actual GPX parser/upload writes metadata and authorized download succeeds');
+    for(const suffix of ['comments','likers','recommendations']) {
+      const endpoint=`/trips/${createdGpx._id}/${suffix}`;
+      assert.equal((await request(endpoint)).status,404);
+      assert.equal((await request(endpoint,{headers:headers(b)})).status,404);
+      assert.equal((await request(endpoint,{headers:headers(a)})).status,200);
+    }check('private trip comments, likers and recommendations enforce visibility');
+    const privateRec=await Recommendation.create({user:owner._id,name:'Private recommendation fixture',description:'Synthetic',rating:3,primaryCategory:'OTHER',location:{type:'Point',coordinates:[4,50]},associatedTrip:createdGpx._id});
+    for(const prefix of ['/recommendations','/v2/recommendations']) {
+      assert.equal((await request(`${prefix}/${privateRec.id}`)).status,404);
+      assert.equal((await request(`${prefix}/${privateRec.id}`,{headers:headers(a)})).status,200);
+    }
+    const anonymousRecs=await (await request('/recommendations')).json();assert(!anonymousRecs.some(rec=>rec._id===privateRec.id));
+    const ownerRecs=await (await request('/recommendations',{headers:headers(a)})).json();assert(ownerRecs.some(rec=>rec._id===privateRec.id));check('direct and list recommendations inherit private trip policy');
+    await Trip.updateOne({_id:createdGpx._id},{$set:{defaultTripVisibility:'followers_only'}});
+    assert.equal((await request(`/recommendations/${privateRec.id}`,{headers:headers(f)})).status,200);
+    assert.equal((await request(`/recommendations/${privateRec.id}`,{headers:headers(b)})).status,404);check('recommendation detail respects follower access');
+    const forgedRec=await Recommendation.create({user:stranger._id,name:'Foreign association fixture',description:'Synthetic',rating:3,primaryCategory:'OTHER',location:{type:'Point',coordinates:[4,50]},associatedTrip:createdGpx._id});
+    const forgedList=await (await request(`/v2/recommendations/user/${stranger.id}`,{headers:headers(b)})).json();assert(!JSON.stringify(forgedList).includes(forgedRec.id));check('v2 recommendation profile rejects foreign-trip association');
+    await Trip.updateOne({_id:createdGpx._id},{$set:{defaultTripVisibility:'private'}});
+    for(const endpoint of ['/search?q=OTHER&type=recommendations','/v2/search?q=OTHER&type=recommendations']) {
+      const anonymousSearch=await request(endpoint);assert.equal(anonymousSearch.status,200,await anonymousSearch.clone().text());
+      assert(!(await anonymousSearch.json()).some(rec=>rec._id===privateRec.id));
+      const ownerSearch=await request(endpoint,{headers:headers(a)});assert.equal(ownerSearch.status,200,await ownerSearch.clone().text());
+      assert((await ownerSearch.json()).some(rec=>rec._id===privateRec.id));
+    }check('legacy and v2 search hide private recommendations but retain owner access');
+    for(const endpoint of ['/search?q=Actual&type=trips','/v2/search?q=Actual&type=trips']) {
+      const response=await request(endpoint);assert.equal(response.status,200,await response.clone().text());
+      assert(!(await response.json()).some(item=>item._id===createdGpx._id));
+    }check('search hides private trip metadata');
+    for(const suffix of ['comments','like']) {
+      const response=await request(`/trips/${createdGpx._id}/${suffix}`,{method:'POST',headers:{...headers(b),'Content-Type':'application/json'},body:JSON.stringify({text:'Unrelated account fixture'})});
+      assert.equal(response.status,404);
+    }
+    const unchangedPrivate=await Trip.findById(createdGpx._id);assert.equal(unchangedPrivate.comments.length,0);assert.equal(unchangedPrivate.likes.length,0);check('unrelated account cannot comment on or like private trip');
+    await Trip.updateOne({_id:createdGpx._id},{$set:{defaultTripVisibility:'followers_only'}});
+    assert.equal((await request(`/trips/${createdGpx._id}/like`,{method:'POST',headers:headers(f)})).status,200);
+    assert.equal((await request(`/trips/${createdGpx._id}/like`,{method:'POST',headers:headers(f)})).status,400);
+    assert.equal((await request(`/trips/${createdGpx._id}/like`,{method:'DELETE',headers:headers(f)})).status,200);check('authorized follower can like and unlike visible trip');
     const logout=await request('/auth/logout',{method:'POST',headers:headers(a)});assert.equal(logout.status,200);assert(logout.headers.getSetCookie().some(x=>x.startsWith('token=none;')));check('logout sends replacement cookie');
     const loggedOutCookies=logout.headers.getSetCookie().map(x=>x.split(';')[0]).join('; ');assert.equal((await request('/auth/me',{headers:{Cookie:loggedOutCookies}})).status,401);check('logout replacement cookie no longer authenticates');
     console.log(`Integration result: ${passed} checks passed against real Mongo/Express/GridFS.`);
