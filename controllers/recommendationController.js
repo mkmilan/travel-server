@@ -309,7 +309,7 @@ const deleteRecommendation = async (req, res, next) => {
 			const photoDeletionPromises = recommendation.photos.map(
 				async (photoId) => {
 					try {
-						await storageService.deleteFile(photoId.toString());
+						await storageService.deleteFile(photoId.toString(), userId);
 					} catch (deleteError) {
 						console.warn(
 							`Failed to delete photo file ${photoId} for recommendation ${recommendationId}: ${deleteError.message}`

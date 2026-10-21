@@ -258,7 +258,7 @@ const updateUserProfile = async (req, res, next) => {
 				if (oldFileId && mongoose.Types.ObjectId.isValid(oldFileId)) {
 					try {
 						console.log(`Attempting to delete old profile picture file: ${oldFileId}`);
-						await storageService.deleteFile(oldFileId);
+						await storageService.deleteFile(oldFileId, userId);
 						console.log(`Deleted old profile picture file: ${oldFileId}`);
 					} catch (deleteError) {
 						console.warn(`Failed to delete old profile picture file ${oldFileId}, continuing...`, deleteError);

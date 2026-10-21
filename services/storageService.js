@@ -168,7 +168,7 @@ const getFileStream = (fileIdString) => {
  */
 // FINAL ATTEMPT version for server/services/storageService.js -> deleteFile
 
-const deleteFile = async (fileIdString) => {
+const deleteFile = async (fileIdString, userId) => {
 	// Make the function async
 	if (!gfs) {
 		console.error("[DeleteFile] GridFSBucket not initialized.");
@@ -199,6 +199,9 @@ const deleteFile = async (fileIdString) => {
 			);
 			return; // Return successfully (Promise resolves with undefined)
 		}
+
+		// File references are not authority: enforce original uploader ownership.
+		require("./fileOwnership").assertFileOwner(files[0], userId);
 
 		// --- STEP 2: File exists, attempt deletion ---
 		console.log(

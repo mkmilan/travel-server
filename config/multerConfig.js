@@ -8,9 +8,8 @@ const storage = multer.memoryStorage();
 // --- File Filter ---
 
 const imageFileFilter = (req, file, cb) => {
-	const filetypes = /jpeg|jpg|png|gif|webp/;
-	const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-	const mimetype = filetypes.test(file.mimetype);
+	const extname = /^(\.jpeg|\.jpg|\.png|\.gif|\.webp)$/.test(path.extname(file.originalname).toLowerCase());
+	const mimetype = /^image\/(jpeg|jpg|png|gif|webp)$/.test(file.mimetype);
 
 	if (mimetype && extname) {
 		return cb(null, true);

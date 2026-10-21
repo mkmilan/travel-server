@@ -21,48 +21,8 @@ const app = express();
 // and is important for 'Secure' cookies to work.
 app.set("trust proxy", 1); // Trust first proxy
 
-const allowedOrigins = [
-	"http://localhost:3000",
-	"https://travel-client-tau.vercel.app",
-	"http://localhost:8081", // Expo web dev
-	"http://192.168.1.193:8081", // direct IP web dev
-	"http://localhost:19006", // another Expo web port
-	"exp://192.168.1.193:19006", // Expo Go (optional)
-	process.env.FRONTEND_URL,
-	process.env.PUBLIC_SITE_URL,
-	process.env.EXPO_URL,
-].filter(Boolean); // Remove any undefined values
-
-// console.log("Allowed Origins:", allowedOrigins);
-
-// CORS Configuration
-const corsOptions = {
-	origin: function (origin, callback) {
-		// console.log("Request Origin:", origin);
-
-		// Allow requests with no origin (like mobile apps or curl requests)
-		if (!origin) return callback(null, true);
-
-		// Normalize and check origin
-		// Ensure allowedOrigin doesn't have a trailing slash for startsWith comparison
-		const isAllowed = allowedOrigins.some((allowedOrigin) => {
-			const normalizedAllowedOrigin = allowedOrigin.replace(/\/$/, ""); // Remove trailing slash if any
-			return origin.startsWith(normalizedAllowedOrigin);
-		});
-
-		if (isAllowed) {
-			callback(null, true);
-		} else {
-			console.log("Origin blocked by CORS:", origin);
-			callback(new Error("Not allowed by CORS"));
-		}
-	},
-	credentials: true,
-	methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-	allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
-	exposedHeaders: ["Set-Cookie"],
-	optionsSuccessStatus: 200,
-};
+const { createCorsOptions } = require("./config/corsOptions");
+const corsOptions = createCorsOptions();
 // --- Core Middleware ---
 // Enable CORS - Configure origins as needed for production
 app.use(cors(corsOptions));
@@ -131,7 +91,7 @@ const errorHandler = (err, req, res, next) => {
 	if (process.env.NODE_ENV === "development") {
 		console.error(err.stack);
 	}
-	const statusCode = err.statusCode || 500;
+	const statusCode = err.statusCode || (res.statusCode >= 400 ? res.statusCode : 500);
 	// Specific check for CORS errors passed from the cors middleware
 	if (err.message === "Not allowed by CORS" && !res.headersSent) {
 		return res.status(403).json({
@@ -167,9 +127,6 @@ app.use((err, req, res, next) => {
 			method: req.method,
 			origin: req.headers.origin,
 			referer: req.headers.referer,
-			cookiesSent: req.cookies, // Cookies received by server
-			csrfTokenInHeader: req.headers["x-csrf-token"] || req.headers["xsrf-token"] || req.headers["x-xsrf-token"],
-			bodyCsrfToken: req.body && req.body._csrf, // If sent in body
 		});
 		res.status(403).json({
 			message: "Invalid CSRF token. Please refresh the page and try again.",

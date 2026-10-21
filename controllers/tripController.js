@@ -153,7 +153,7 @@ const createTrip = async (req, res, next) => {
 
 		const filename = `trip_${userId}_${Date.now()}.gpx`; // Create a unique filename
 
-		gpxFileRef = await storageService.uploadFile(gpxString, filename, {
+		gpxFileRef = await storageService.uploadFile(gpxString, filename, "application/gpx+xml", {
 			userId: userId.toString(), // Add metadata
 			originalTimestamp: Date.now(),
 		});
@@ -199,7 +199,7 @@ const createTrip = async (req, res, next) => {
 				`Trip creation failed after GPX upload. Attempting to delete GridFS file: ${gpxFileRef}`
 			);
 			try {
-				await storageService.deleteFile(gpxFileRef);
+				await storageService.deleteFile(gpxFileRef, userId);
 				console.log(`Orphaned GridFS file ${gpxFileRef} deleted.`);
 			} catch (deleteError) {
 				console.error(
@@ -279,7 +279,7 @@ const getTripById = async (req, res, next) => {
 /**
  * @desc    Get the raw GPX file content for a trip
  * @route   GET /api/trips/:tripId/gpx
- * @access  Public (for now, assuming GPX files aren't private)
+ * @access  Visibility checked by mediaAccess middleware
  */
 const getTripGpx = async (req, res, next) => {
 	const { tripId } = req.params;
@@ -291,7 +291,7 @@ const getTripGpx = async (req, res, next) => {
 
 	try {
 		// 1. Find the trip document to get the gpxFileRef
-		const trip = await Trip.findById(tripId).select("gpxFileRef title user"); // Select only needed fields
+		const trip = req.mediaTrip; // Loaded and authorized by mediaAccess middleware
 		if (!trip || !trip.gpxFileRef) {
 			res.status(404);
 			// Distinguish between trip not found and GPX ref missing
@@ -522,7 +522,7 @@ const deleteTrip = async (req, res, next) => {
 		// Delete GPX file first if it exists
 		if (trip.gpxFileRef) {
 			try {
-				await storageService.deleteFile(trip.gpxFileRef);
+				await storageService.deleteFile(trip.gpxFileRef, userId);
 			} catch (deleteError) {
 				// Log the error but continue with trip deletion
 				console.warn(
@@ -535,7 +535,7 @@ const deleteTrip = async (req, res, next) => {
 		if (trip.photos && trip.photos.length > 0) {
 			const photoDeletionPromises = trip.photos.map(async (photoId) => {
 				try {
-					await storageService.deleteFile(photoId.toString()); // Ensure it's a string
+					await storageService.deleteFile(photoId.toString(), userId); // Ensure it's a string
 				} catch (photoDeleteError) {
 					// Log error for individual photo deletion failure but continue
 					console.warn(
@@ -549,7 +549,7 @@ const deleteTrip = async (req, res, next) => {
 
 		// 3. Find and delete associated recommendations and their photos
 		const recommendationsToDelete = await Recommendation.find({
-			associatedTrip: tripId,
+			associatedTrip: tripId, user: userId,
 		}).select("photos");
 		// .session(session);
 
@@ -558,7 +558,7 @@ const deleteTrip = async (req, res, next) => {
 				if (rec.photos && rec.photos.length > 0) {
 					const recPhotoDeletionPromises = rec.photos.map(async (photoId) => {
 						try {
-							await storageService.deleteFile(photoId.toString());
+							await storageService.deleteFile(photoId.toString(), userId);
 						} catch (recPhotoDeleteError) {
 							console.warn(
 								`Failed to delete recommendation photo file ${photoId} for trip ${tripId}: ${recPhotoDeleteError.message}`
@@ -569,7 +569,7 @@ const deleteTrip = async (req, res, next) => {
 				}
 			}
 			// Delete the recommendation documents
-			await Recommendation.deleteMany({ associatedTrip: tripId });
+			await Recommendation.deleteMany({ associatedTrip: tripId, user: userId });
 			// .session(	session);
 		}
 
@@ -1136,7 +1136,7 @@ const deleteTripPhoto = async (req, res, next) => {
 
 		// Try to delete the file from GridFS first
 		try {
-			await storageService.deleteFile(photoIdString);
+			await storageService.deleteFile(photoIdString, userId);
 			console.log(`Successfully deleted photo file ${photoId} from storage`);
 		} catch (storageError) {
 			console.error(

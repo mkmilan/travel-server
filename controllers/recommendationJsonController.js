@@ -1,3 +1,4 @@
+const { assertOwnedPhotos } = require("../services/fileOwnership");
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const User = require("../models/User");
@@ -79,7 +80,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 			let finalPhotoIds = [];
 			if (recData.id && mongoose.Types.ObjectId.isValid(recData.id)) {
 				// This might be an update to existing recommendation
-				const existingRec = await Recommendation.findById(recData.id).select("photos");
+				const existingRec = await Recommendation.findOne({ _id: recData.id, user: userId }).select("photos");
 				if (existingRec) {
 					const existingPhotoIds = existingRec.photos || [];
 					const existingPhotoIdStrings = existingPhotoIds.map((id) => id.toString());
@@ -108,6 +109,8 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 					? recData.photoIds.filter((id) => mongoose.Types.ObjectId.isValid(id))
 					: [];
 			}
+
+			await assertOwnedPhotos(finalPhotoIds, userId);
 
 			const recommendationToSave = {
 				user: userId,
@@ -375,13 +378,14 @@ const updateRecommendationJson = async (req, res, next) => {
 			recommendation.source = updateData.source;
 		}
 
+		await assertOwnedPhotos(recommendation.photos || [], userId);
 		const updatedRecommendation = await recommendation.save();
 
 		res.status(200).json(updatedRecommendation);
 	} catch (error) {
 		console.error("Error in updateRecommendationJson:", error);
-		if (error.name === "ValidationError") {
-			return res.status(400).json({ message: error.message });
+		if (error.name === "ValidationError" || error.statusCode === 400 || error.statusCode === 403) {
+			return res.status(error.statusCode || 400).json({ message: error.message });
 		}
 		if (!res.headersSent) {
 			res.status(500).json({ message: "Server error while updating recommendation." });
@@ -636,7 +640,7 @@ const deleteRecommendationPhoto = async (req, res, next) => {
 
 		// Delete the file from storage (GridFS)
 		try {
-			await storageService.deleteFile(photoId);
+			await storageService.deleteFile(photoId, userId);
 			console.log(`Deleted photo file ${photoId} from storage`);
 		} catch (storageError) {
 			console.warn(`Failed to delete photo file ${photoId} from storage:`, storageError.message);
@@ -692,7 +696,7 @@ const deleteRecommendationJson = async (req, res, next) => {
 
 			const photoDeletionPromises = recommendation.photos.map(async (photoId) => {
 				try {
-					await storageService.deleteFile(photoId);
+					await storageService.deleteFile(photoId, userId);
 					console.log(`Deleted photo file ${photoId} for recommendation ${recommendationId}`);
 				} catch (deleteError) {
 					// Log the error but don't fail the entire operation

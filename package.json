@@ -5,7 +5,8 @@
   "scripts": {
     "start": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development nodemon server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/*.test.js",
+    "test:integration": "node scripts/integration-smoke.cjs"
   },
   "keywords": [],
   "author": "",
@@ -24,11 +25,14 @@
     "gpx-parse": "^0.10.4",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.13.1",
-    "multer": "^1.4.5-lts.2",
+    "multer": "^2.4.0",
     "nodemailer": "^7.0.3",
     "sharp": "^0.34.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=22 <25"
   }
 }

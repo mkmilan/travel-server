@@ -1,4 +1,6 @@
-# .gitignore (in server directory)
-
-node_modules
+node_modules/
 .env
+.env.*
+!.env.example
+*.log
+coverage/

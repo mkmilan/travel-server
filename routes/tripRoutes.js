@@ -33,7 +33,8 @@ router.get("/me", protect, getMyTrips);
 router.get("/feed", protect, getFeedTrips);
 
 // --- Specific Document Routes ---
-router.get("/:tripId/gpx", getTripGpx);
+const mediaAccess = require("../middleware/mediaAccess").defaultMediaAccess();
+router.get("/:tripId/gpx", protectOptional, mediaAccess.tripGpx, getTripGpx);
 router.put("/:tripId", protect, updateTrip);
 router.delete("/:tripId", protect, deleteTrip);
 router.post("/:tripId/pois", protect, addPoiToTrip);

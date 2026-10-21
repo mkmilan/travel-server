@@ -21,7 +21,7 @@ mongoose.connection.on("error", (err) => {
 /**
  * @desc    Get a photo file by its GridFS ID
  * @route   GET /api/photos/:photoId
- * @access  Public
+ * @access  Visibility checked by mediaAccess middleware
  */
 const getPhotoById = async (req, res, next) => {
 	const { photoId } = req.params;
@@ -65,7 +65,7 @@ const getPhotoById = async (req, res, next) => {
 		// --- Set Headers ---
 		res.setHeader("Content-Type", contentType);
 		// Optional: Caching headers (adjust max-age as needed)
-		res.setHeader("Cache-Control", "public, max-age=604800"); // Cache for 1 week
+		res.setHeader("Cache-Control", "private, no-store"); // Trip visibility can change
 
 		// --- Get Stream and Pipe ---
 		// Use storageService.getFileStream which should internally use gfs.openDownloadStream
