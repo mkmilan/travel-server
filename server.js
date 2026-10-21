@@ -6,16 +6,15 @@ const csrf = require("@dr.pogodin/csurf").default;
 require("dotenv").config();
 const connectDB = require("./config/db"); // Ensure path is correct
 
-// --- Database Connection ---
-// Establish connection early
-connectDB();
-
 // --- Initialize Services (like Storage) ---
 // Import the service file to ensure its initialization code runs (e.g., attaching DB listeners)
-require("./services/storageService"); // Ensure path is correct
+const storageService = require("./services/storageService"); // Register DB listeners before connecting
 
 // --- Create Express App ---
 const app = express();
+// Readiness is public, side-effect-free, and does not create CSRF cookies.
+const { createReadinessHandler } = require("./config/readiness");
+app.get("/healthz", createReadinessHandler(require("mongoose").connection, storageService.isReady));
 // --- Trust Proxy ---
 // If your app is behind a proxy (like on Render), this helps Express correctly determine protocol (http/https)
 // and is important for 'Secure' cookies to work.
@@ -142,7 +141,10 @@ app.use(errorHandler);
 // --- Start Server ---
 const PORT = process.env.PORT || 5001; // Use PORT from .env or default
 
-app.listen(PORT, () => console.log(`Server running in ${process.env.NODE_ENV || "development"} mode on port ${PORT}`));
+// Do not pass TCP readiness before the required database has connected.
+connectDB().then(() => {
+	app.listen(PORT, () => console.log(`Server running in ${process.env.NODE_ENV || "development"} mode on port ${PORT}`));
+});
 
 // --- Handle Unhandled Promise Rejections ---
 process.on("unhandledRejection", (err, promise) => {

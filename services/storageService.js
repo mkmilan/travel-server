@@ -242,6 +242,7 @@ const deleteFile = async (fileIdString, userId) => {
 };
 
 module.exports = {
+	isReady: () => Boolean(gfs),
 	uploadFile,
 	getFileStream,
 	deleteFile,

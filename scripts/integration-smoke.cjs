@@ -66,6 +66,9 @@ async function main() {
     }
     const request = async (url, options={}) => fetch(base+url, {...options, signal:AbortSignal.timeout(10000)});
     assert.equal((await request('')).status,200); check('actual Express app starts against disposable Mongo');
+    const readiness = await fetch(`http://127.0.0.1:${apiPort}/healthz`);
+    assert.equal(readiness.status,200); assert.deepEqual(await readiness.json(),{status:'ready'});
+    assert.equal(readiness.headers.get('set-cookie'),null); check('readiness requires connected Mongo and GridFS without cookies');
     const session = async email => {
       const csrfResponse=await request('/csrf-token');
       const csrf=(await csrfResponse.json()).csrfToken;

@@ -136,3 +136,12 @@ users or seed a production database. End-to-end email-link testing still needs
 the private local harness or a separately approved test-only mail system.
 Do not extract authentication links from staging logs. No cloud resources,
 secrets, deployment, or production-data access is authorized by this configuration.
+
+## Readiness checks
+
+The listener starts only after MongoDB connects. Configure hosting HTTP health
+checks to `/healthz`: it returns 200 only while the Mongo connection is open and
+GridFS is initialized, otherwise 503. Responses are non-cacheable, contain no
+connection details, and do not create cookies. This reflects driver connection
+state, not a database write/read probe. `/api` remains the compatibility status
+route and is not a database readiness check.
