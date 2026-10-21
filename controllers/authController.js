@@ -153,7 +153,6 @@ const registerUser = [
 			const verificationUrl = `${
 				clientBaseUrl || "http://localhost:3000"
 			}/verify-email/${verificationToken}`;
-			console.log("Verification URL created:", verificationUrl);
 			const message = `
    <p>Please verify your email address by clicking the link below:</p>
    <p><a href="${verificationUrl}">Verify Email</a></p>

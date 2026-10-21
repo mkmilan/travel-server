@@ -83,7 +83,7 @@ async function main() {
     assert.equal((await request('/auth/me',{headers:{Authorization:`Bearer ${b.token}`}})).status,200);check('bearer authentication for mobile');
     assert.equal((await request('/auth/logout',{method:'POST',headers:{Cookie:a.cookie}})).status,403);check('CSRF rejects unsafe request without token');
     const register=await request('/auth/register',{method:'POST',headers:{...headers(a),'Content-Type':'application/json'},body:JSON.stringify({username:'Registered Fixture',email:'registered@example.com',password:FIXTURE_PASSWORD})});assert.equal(register.status,201,await register.clone().text());
-    const verifyToken=app.logs().match(/Verification URL created: http:\/\/localhost:3000\/verify-email\/([a-f0-9]+)/)?.[1];assert(verifyToken,'Development email link must be generated without SMTP');assert.equal((await request('/auth/verifyemail/'+verifyToken)).status,200);const registered=await session('registered@example.com');assert(registered.token);check('register, development email verification, and login');
+    const verifyToken=app.logs().match(/Test Link: http:\/\/localhost:3000\/verify-email\/([a-f0-9]+)/)?.[1];assert(verifyToken,'Development email link must be generated without SMTP');assert.equal((await request('/auth/verifyemail/'+verifyToken)).status,200);const registered=await session('registered@example.com');assert(registered.token);check('register, development email verification, and login');
     assert.equal((await request('',{headers:{Origin:'http://localhost:3000.attacker.invalid'}})).status,403);check('CORS rejects lookalike origin');
     const allowed=await request('',{headers:{Origin:'http://localhost:3000'}});assert.equal(allowed.headers.get('access-control-allow-origin'),'http://localhost:3000');check('CORS allows exact development origin');
     const trip=await Trip.create({user:owner._id,title:'Synthetic private trip',format:'json',durationMillis:1000,distanceMeters:1,defaultTripVisibility:'private'});
@@ -174,6 +174,30 @@ async function main() {
     assert.equal((await request(`/trips/${createdGpx._id}/like`,{method:'DELETE',headers:headers(f)})).status,200);check('authorized follower can like and unlike visible trip');
     const logout=await request('/auth/logout',{method:'POST',headers:headers(a)});assert.equal(logout.status,200);assert(logout.headers.getSetCookie().some(x=>x.startsWith('token=none;')));check('logout sends replacement cookie');
     const loggedOutCookies=logout.headers.getSetCookie().map(x=>x.split(';')[0]).join('; ');assert.equal((await request('/auth/me',{headers:{Cookie:loggedOutCookies}})).status,401);check('logout replacement cookie no longer authenticates');
+    // Reuse only the disposable DB; exercise production settings without SMTP.
+    await stop(app);
+    app = start(process.execPath, ['-e', `require('nodemailer').createTransport=()=>{throw Error('SMTP must never be used by disabled fixture')};const http=require('node:http');const original=http.Server.prototype.listen;http.Server.prototype.listen=function(port,...args){return original.call(this,port,'127.0.0.1',...args)};require('./server.js')`], {
+      PATH:process.env.PATH, NODE_ENV:'production', EMAIL_MODE:'disabled',
+      PORT:String(apiPort), MONGO_URI:uri,
+      JWT_SECRET:'disposable-integration-fixture-not-for-deployment', JWT_COOKIE_EXPIRE:'1',
+      EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES:'60', PASSWORD_RESET_TOKEN_EXPIRE_MINUTES:'60',
+      FRONTEND_URL:'http://localhost:3000', PUBLIC_SITE_URL:'http://localhost:3000'
+    });
+    for(let i=0;i<100 && !app.logs().includes('MongoDB Connected');i++) {
+      if(app.process.exitCode !== null) throw Error('Disabled-email fixture startup failed');
+      await sleep(100);
+    }
+    const productionSession = await session(owner.email);
+    assert(productionSession.cookie.includes('__Host-'));check('production CSRF cookie settings retained with disabled email');
+    const postFixture = (endpoint, body) => request(endpoint, {method:'POST',headers:{...headers(productionSession),'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const disabledRegistration=await postFixture('/auth/register',{username:'Disabled Fixture',email:'disabled@example.com',password:FIXTURE_PASSWORD});
+    assert.equal(disabledRegistration.status,201);check('production disabled email registration succeeds without SMTP');
+    const pendingUser=await User.findOne({email:'disabled@example.com'}).select('+emailVerificationToken');
+    assert.equal(pendingUser.isEmailVerified,false);
+    assert(pendingUser.emailVerificationToken);
+    assert.equal((await postFixture('/auth/login',{email:'disabled@example.com',password:FIXTURE_PASSWORD})).status,403);check('disabled email never auto-verifies or permits unverified login');
+    assert.equal((await postFixture('/auth/forgotpassword',{email:owner.email})).status,200);check('production disabled password reset never invokes SMTP');
+    assert(!/verify-email\/|reset-password\/|Test Link:|Verification URL created:|<a href=/.test(app.logs()));check('production disabled auth flows do not log email contents or links');
     console.log(`Integration result: ${passed} checks passed against real Mongo/Express/GridFS.`);
   } finally {
     await stop(app);

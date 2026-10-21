@@ -32,12 +32,14 @@ uses a temporary database and explicit throwaway fixture signing value, captures
 development email output privately, then stops both processes and removes its
 own temporary database. It never imports SMTP or production settings.
 
-Verified on 2026-10-21 with Node 24 and MongoDB 7.0.24: **36 integration checks
+Verified on 2026-10-21 with Node 24 and MongoDB 7.0.24: **41 integration checks
 passed**, covering actual bcrypt login, registration/email verification in
 no-send development mode, cookie/bearer auth, logout cookies, CSRF/CORS,
 Multer/Sharp/GridFS uploads, public/private/follower photo access, private GPX,
 forged attachment rejection and storage ownership on deletion. The test also
 checks that authentication failures retain HTTP 401 instead of becoming 500.
+Five additional checks exercise disabled email with production settings, including
+no SMTP, no logged links, retained secure CSRF cookies and blocked unverified login.
 
 This is HTTP integration, not browser cookie-policy or native-device testing.
 The fixture does not cover GPS hardware, foreground/background transitions,
@@ -109,3 +111,28 @@ before editing; do not automatically assign legacy files to the signed-in user.
 - `gpx-parse` has no upstream patched XML dependency range. A scoped `xml2js` 0.6.2 override removes the vulnerable parser; track, waypoint, timestamp, malformed XML and prototype-safety fixtures cover compatibility. A future parser replacement should be separately planned.
 - Development uses Node's built-in `--watch`, removing nodemon's obsolete glob dependencies. Use current Node 24 as in `.nvmrc`; Node 22 requires at least 22.12 for CommonJS/ESM interoperability.
 - GPX reads verify both uploader and original trip metadata. Legacy/misattributed file references remain fail-closed pending a trustworthy inventory/migration.
+
+
+## Isolated staging email safety (configuration only; not deployed)
+
+For an independently approved, isolated HTTPS staging environment, keep
+`NODE_ENV=production` so production cookie and error-handling protections remain
+enabled, and explicitly set `EMAIL_MODE=disabled`. This suppresses all SMTP
+transport creation/sending and email content/token logging. No SMTP credentials
+are needed. Do not deploy the local development example unchanged.
+
+When `EMAIL_MODE` is unset or empty, existing behavior is retained: development
+logs email content locally without sending, while other environments use SMTP.
+The only supported nonempty value is exactly `disabled`; other values reject
+email attempts instead of accidentally falling through to SMTP. Never set
+disabled mode on a live service that needs verification or password-reset emails.
+
+Disabled delivery does not auto-verify users, expose tokens through responses,
+or bypass login checks. Registration/reset responses retain their existing
+wording even though no message is delivered. Newly registered users remain
+unverified and cannot log in. Use separately prepared **synthetic verified
+fixtures in the isolated database** for ordinary UI testing; never modify real
+users or seed a production database. End-to-end email-link testing still needs
+the private local harness or a separately approved test-only mail system.
+Do not extract authentication links from staging logs. No cloud resources,
+secrets, deployment, or production-data access is authorized by this configuration.

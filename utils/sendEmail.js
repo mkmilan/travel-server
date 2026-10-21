@@ -1,6 +1,12 @@
 const nodemailer = require("nodemailer");
 
 const sendEmail = async (options) => {
+	// Explicit no-send mode also works with production cookie/error settings.
+	// Never inspect or log message contents, recipients or authentication links here.
+	if (process.env.EMAIL_MODE === "disabled") return;
+	if (process.env.EMAIL_MODE) {
+		throw new Error("Unsupported EMAIL_MODE: leave unset or use disabled");
+	}
 	if (process.env.NODE_ENV === "development") {
 		console.log("--- Sending Email (Development Mode) ---");
 		console.log("To:", options.email);
