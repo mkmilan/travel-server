@@ -5,12 +5,28 @@ const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const { processPendingRecommendations } = require("./recommendationJsonController"); // Import the new function
 const { json } = require("express");
+const { fingerprint, validKey, httpError, requireUploadIndexes } = require("../services/uploadIdempotency");
+
+exports.createRecordingUpload = (req, res, next) => {
+	req.recordingUpload = true;
+	return exports.createTripJson(req, res, next);
+};
 
 /* POST  /api/v2/trips/json   (protected) */
 exports.createTripJson = async (req, res, next) => {
 	try {
 		const userId = req.user._id;
 		const userSettings = req.user.settings || {};
+		const reliable = req.recordingUpload === true;
+		let uploadFingerprint;
+		if (reliable) {
+			if (req.body.uploadProtocol !== 1 || !validKey(req.body.uploadId)) throw httpError(400, "Invalid recording upload identity");
+			const children = req.body.recommendations || [];
+			if (!Array.isArray(children) || children.some(child => !validKey(child.uploadId))
+				|| new Set(children.map(child => child.uploadId)).size !== children.length) throw httpError(400, "Invalid recommendation upload identities");
+			await requireUploadIndexes(Trip, Recommendation);
+			uploadFingerprint = fingerprint(req.body);
+		}
 		const {
 			title: requestTitle,
 			description,
@@ -79,24 +95,64 @@ exports.createTripJson = async (req, res, next) => {
 			mapCenter: { lat: allPts[0].lat, lon: allPts[0].lon },
 		};
 
-		const savedTrip = await Trip.create(newTripData);
+		let savedTrip;
+		if (reliable) {
+			const identity = { user: userId, clientUploadId: req.body.uploadId };
+			savedTrip = await Trip.findOne(identity);
+			if (!savedTrip) {
+				// Deterministic validation failures must be known before ANY trip is
+				// created, so the phone can safely unlock its frozen local draft.
+				try {
+					await new Trip(newTripData).validate();
+					for (const child of pendingRecommendationsPayload) {
+						if (!child.name || child.latitude == null || child.longitude == null || !child.primaryCategory
+							|| String(child.latitude).trim() === "" || String(child.longitude).trim() === "") throw new Error("Missing recommendation fields");
+						const lat = parseFloat(child.latitude), lon = parseFloat(child.longitude);
+						if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) throw new Error("Invalid recommendation coordinates");
+						if (child.photoIds?.length || child.id) throw new Error("Recording recommendations cannot attach existing photos or records");
+						await new Recommendation({
+							user: userId, name: child.name, description: child.description || child.note || "",
+							rating: child.rating || 3, primaryCategory: child.primaryCategory,
+							attributeTags: child.attributeTags || [], location: { type: "Point", coordinates: [lon, lat] },
+							source: child.source || "TRACKING",
+						}).validate();
+					}
+				} catch (error) {
+					return res.status(400).json({ uploadRejected: true, uploadId: req.body.uploadId, message: `Upload details need correction: ${error.message}. No trip was created by this request.` });
+				}
+				try { savedTrip = await Trip.create({ ...newTripData, ...identity, uploadFingerprint, uploadComplete: false }); }
+				catch (error) {
+					if (error.code !== 11000) throw error;
+					savedTrip = await Trip.findOne(identity);
+					if (!savedTrip) throw error;
+				}
+			}
+			if (savedTrip.uploadFingerprint !== uploadFingerprint) throw httpError(409, "This upload identity already belongs to a different saved payload. Keep the local recording and contact support.");
+		} else savedTrip = await Trip.create(newTripData);
 
 		// --- Process Pending Recommendations using the new controller function ---
 		let recommendationsOutcome = [];
-		if (savedTrip && savedTrip._id) {
+		if (savedTrip && savedTrip._id && !(reliable && savedTrip.uploadComplete)) {
 			console.log(
 				`Processing ${pendingRecommendationsPayload.length} pending recommendations for trip ${savedTrip._id} using recommendationJsonController...`
 			);
 			recommendationsOutcome = await processPendingRecommendations(
 				pendingRecommendationsPayload,
 				userId,
-				savedTrip._id
+				savedTrip._id,
+				{ idempotent: reliable }
 			);
 			console.log(
 				`Finished processing recommendations for trip ${savedTrip._id}. ${
 					recommendationsOutcome.filter((r) => r.status === "created").length
 				} created.`
 			);
+		}
+		if (reliable && savedTrip.uploadComplete) recommendationsOutcome = savedTrip.uploadReceipt || [];
+		const uploadComplete = recommendationsOutcome.length === pendingRecommendationsPayload.length
+			&& recommendationsOutcome.every(outcome => outcome.status === "created");
+		if (reliable && uploadComplete && !savedTrip.uploadComplete) {
+			await Trip.updateOne({ _id: savedTrip._id, user: userId }, { $set: { uploadComplete: true, uploadReceipt: recommendationsOutcome } });
 		}
 		// --- End Recommendation Processing ---
 
@@ -107,6 +163,7 @@ exports.createTripJson = async (req, res, next) => {
 		res.status(201).json({
 			trip: populatedTrip,
 			recommendationsOutcome: recommendationsOutcome,
+			...(reliable ? { uploadProtocol: 1, uploadId: req.body.uploadId, uploadComplete } : {}),
 		});
 	} catch (err) {
 		console.error("createTripJson error:", err);

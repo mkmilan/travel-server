@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 
 const recommendationSchema = new mongoose.Schema(
 	{
+		clientUploadId: { type: String },
 		user: {
 			type: mongoose.Schema.Types.ObjectId,
 			ref: "User",

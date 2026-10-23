@@ -60,6 +60,11 @@ const poiSchema = new mongoose.Schema(
 // --- Trip Schema ---
 const tripSchema = new mongoose.Schema(
 	{
+		// Optional receipt fields for the explicit idempotent JSON upload endpoint.
+		clientUploadId: { type: String },
+		uploadFingerprint: { type: String },
+		uploadComplete: { type: Boolean },
+		uploadReceipt: { type: mongoose.Schema.Types.Mixed },
 		format: {
 			type: String,
 			enum: ["gpx", "json"],

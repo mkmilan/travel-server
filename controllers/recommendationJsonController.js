@@ -15,7 +15,7 @@ const path = require("path");
  * @param   {mongoose.Types.ObjectId} tripId - The ID of the trip these recommendations are associated with.
  * @returns {Promise<Array<Object>>} A promise that resolves to an array of outcomes for each recommendation.
  */
-const processPendingRecommendations = async (pendingRecommendations, userId, tripId) => {
+const processPendingRecommendations = async (pendingRecommendations, userId, tripId, { idempotent = false } = {}) => {
 	if (!pendingRecommendations || !Array.isArray(pendingRecommendations) || pendingRecommendations.length === 0) {
 		return []; // No recommendations to process
 	}
@@ -25,6 +25,14 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 
 	for (const recData of pendingRecommendations) {
 		try {
+			const identity = idempotent ? { user: userId, associatedTrip: tripId, clientUploadId: recData.uploadId } : null;
+			if (identity) {
+				const existing = await Recommendation.findOne(identity);
+				if (existing) {
+					createdRecommendationsInfo.push({ id: existing._id, uploadId: recData.uploadId, name: existing.name, status: "created" });
+					continue;
+				}
+			}
 			// --- Validate and Map Recommendation Data ---
 			if (
 				!recData.name ||
@@ -38,6 +46,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 				);
 				createdRecommendationsInfo.push({
 					name: recData.name || "Unknown",
+					...(idempotent ? { uploadId: recData.uploadId } : {}),
 					status: "skipped",
 					reason: "Missing core fields",
 				});
@@ -54,6 +63,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 				});
 				createdRecommendationsInfo.push({
 					name: recData.name,
+					...(idempotent ? { uploadId: recData.uploadId } : {}),
 					status: "skipped",
 					reason: "Invalid coordinates",
 				});
@@ -129,9 +139,16 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 				source: recData.source || "TRACKING", // More specific source
 			};
 
-			const savedRecommendation = await Recommendation.create(recommendationToSave);
+			let savedRecommendation;
+			try { savedRecommendation = await Recommendation.create({ ...recommendationToSave, ...(identity || {}) }); }
+			catch (error) {
+				if (!identity || error.code !== 11000) throw error;
+				savedRecommendation = await Recommendation.findOne(identity);
+				if (!savedRecommendation) throw error;
+			}
 			createdRecommendationsInfo.push({
 				id: savedRecommendation._id,
+				...(idempotent ? { uploadId: recData.uploadId } : {}),
 				name: savedRecommendation.name,
 				status: "created",
 			});
@@ -145,6 +162,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 			);
 			createdRecommendationsInfo.push({
 				name: recData.name || "Unknown",
+					...(idempotent ? { uploadId: recData.uploadId } : {}),
 				status: "failed",
 				error: recError.message,
 			});
