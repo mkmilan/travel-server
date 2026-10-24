@@ -93,6 +93,29 @@ async function main(){
   Trip.findOne=function(query,...args){if(!injected&&query.clientUploadId===racePayload.uploadId){injected=true;return service.deleteTrip(raceId,owner._id).then(()=>originalFind.call(this,query,...args));}return originalFind.call(this,query,...args);};
   let raced;try{raced=await run(racePayload);}finally{Trip.findOne=originalFind;}
   assert.equal(raced.status,410);assert.equal(raced.result.tripId,raceId);assert.equal(await Trip.countDocuments({user:owner._id,clientUploadId:racePayload.uploadId}),0);ok('actual recording controller compensates real recreation when deletion occurs after precheck before identity lookup');
+  // Actual JSON controllers with real owned, foreign and legacy dangling links.
+  const jsonRecommendations=req('./controllers/recommendationJsonController');
+  const invokeRec=async(handler,recordId,body,user=owner)=>{
+   let status,result;await handler({params:{recommendationId:recordId},body,user},{status(value){status=value;return this;},json(value){result=value;}},error=>{throw error;});return{status,result};
+  };
+  const ownedTarget=await trip(),foreignTarget=await trip({user:foreign._id}),missingTarget=new O();
+  for(const oldTarget of [foreignTarget._id,missingTarget])for(const target of [null,ownedTarget.id]){
+   const legacy=await rec(oldTarget);
+   const repaired=await invokeRec(jsonRecommendations.updateRecommendationJson,legacy.id,{associatedTrip:target,name:'Repaired fixture'});
+   assert.equal(repaired.status,200);const stored=await Recommendation.findById(legacy._id);assert.equal(stored.associatedTrip?.toString()||null,target);
+  }
+  ok('real owned legacy dangling/foreign-linked recommendations can explicitly detach or reassign to owned trip');
+  const ordinary=await rec(ownedTarget._id);
+  assert.equal((await invokeRec(jsonRecommendations.updateRecommendationJson,ordinary.id,{name:'Ordinary edit'})).status,200);
+  const createData={name:'Standalone fixture',description:'Synthetic only',latitude:0,longitude:0,primaryCategory:'OTHER'};
+  for(const target of [null,ownedTarget.id])assert.equal((await invokeRec(jsonRecommendations.createSingleRecommendationJson,null,{...createData,associatedTrip:target})).status,201);
+  for(const [target,status]of [['invalid',400],[foreignTarget.id,404],[String(missingTarget),404]]){
+   assert.equal((await invokeRec(jsonRecommendations.updateRecommendationJson,ordinary.id,{associatedTrip:target})).status,status);
+   assert.equal((await invokeRec(jsonRecommendations.createSingleRecommendationJson,null,{...createData,associatedTrip:target})).status,status);
+  }
+  assert.equal((await invokeRec(jsonRecommendations.updateRecommendationJson,ordinary.id,{associatedTrip:null},foreign)).status,403);
+  assert.equal(String((await Recommendation.findById(ordinary._id)).associatedTrip),ownedTarget.id);
+  ok('actual JSON create/edit controllers preserve ordinary writes, reject forbidden targets with 400/404 and enforce recommendation ownership');
   const gpx=await trip({format:'gpx',gpxFileRef:'synthetic-reference',startDate:new Date(),endDate:new Date()});await assert.rejects(service.deleteTrip(gpx.id,owner._id),{statusCode:409});assert(await Trip.exists({_id:gpx._id}));ok('GPX rejected unchanged by mobile permanent deletion');
   console.log(`REAL_MONGO_PROOF_PASS ${passed} checks; observed MongoDB ${observedVersion}; disposable single-node replica only; no HTTP/device/process-kill isolation claim.`);
  } finally {

@@ -107,7 +107,7 @@ async function main() {
     await Trip.updateOne({_id:trip._id},{$set:{defaultTripVisibility:'private'}});
     const recBody={name:'Synthetic forged attachment',description:'Fixture only',latitude:0,longitude:0,primaryCategory:'OTHER',rating:3,photoIds:[photoId]};
     const attach=await request('/v2/recommendations',{method:'POST',headers:{...headers(b),'Content-Type':'application/json'},body:JSON.stringify(recBody)});
-    assert.equal(attach.status,400);assert.equal(await Recommendation.countDocuments({user:stranger._id}),0);check('cross-account recommendation attachment rejected');
+    assert.equal(attach.status,403);assert.equal(await Recommendation.countDocuments({user:stranger._id}),0);check('cross-account recommendation attachment rejected');
     const forged=await Recommendation.create({user:stranger._id,name:'Legacy forged fixture',description:'Synthetic record',rating:3,primaryCategory:'OTHER',location:{type:'Point',coordinates:[0,0]},photos:[photoId]});
     const deletion=await request(`/v2/recommendations/${forged.id}/photos/${photoId}`,{method:'DELETE',headers:headers(b)});
     // API may remove the attacker's own stale reference, but must retain the owner's file.

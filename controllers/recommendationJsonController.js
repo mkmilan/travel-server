@@ -169,6 +169,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 					...(idempotent ? { uploadId: recData.uploadId } : {}),
 				status: "failed",
 				error: recError.message,
+				...(recError.statusCode ? { statusCode: recError.statusCode } : {}),
 			});
 		}
 	}
@@ -264,12 +265,13 @@ const createSingleRecommendationJson = async (req, res, next) => {
 
 			return res.status(201).json(newRecommendation);
 		} else {
-			return res.status(400).json({ message: result.error || "Failed to create recommendation." });
+			return res.status([400, 403, 404, 410].includes(result.statusCode) ? result.statusCode : 400).json({ message: result.error || "Failed to create recommendation." });
 		}
 	} catch (error) {
 		console.error("Error in createSingleRecommendationJson:", error);
 		if (!res.headersSent) {
-			res.status(500).json({ message: "Server error while creating recommendation." });
+			const status = [400, 403, 404, 410].includes(error.statusCode) ? error.statusCode : 500;
+			res.status(status).json({ message: status === 500 ? "Server error while creating recommendation." : error.message });
 		}
 		// Consider calling next(error) if you have a centralized error handler
 	}
@@ -297,8 +299,9 @@ const updateRecommendationJson = async (req, res, next) => {
 			});
 		}
 
-		await assertWritableTrip(recommendation.associatedTrip, userId);
-		if (updateData.associatedTrip !== undefined) await assertWritableTrip(updateData.associatedTrip, userId);
+		// Validate the association that will be saved, not a legacy link being repaired.
+		const effectiveTrip = updateData.associatedTrip !== undefined ? updateData.associatedTrip : recommendation.associatedTrip;
+		await assertWritableTrip(effectiveTrip, userId);
 
 		// Update fields
 		if (updateData.name !== undefined) recommendation.name = updateData.name;
@@ -412,7 +415,7 @@ const updateRecommendationJson = async (req, res, next) => {
 		res.status(200).json(updatedRecommendation);
 	} catch (error) {
 		console.error("Error in updateRecommendationJson:", error);
-		if (error.name === "ValidationError" || error.statusCode === 400 || error.statusCode === 403) {
+		if (error.name === "ValidationError" || [400, 403, 404, 410].includes(error.statusCode)) {
 			return res.status(error.statusCode || 400).json({ message: error.message });
 		}
 		if (!res.headersSent) {
