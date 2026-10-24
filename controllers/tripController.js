@@ -9,6 +9,7 @@ const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
+const { assertWritableTrip, cleanupUnattachedPhotos, appendUploadedPhotos } = require("../services/mobileTripWriteGuard");
 /**
  * @desc    Create a new trip
  * @route   POST /api/trips
@@ -979,6 +980,8 @@ const uploadTripPhotos = async (req, res, next) => {
 			);
 		}
 
+		await assertWritableTrip(tripId, userId);
+
 		// Process and upload each file
 		const uploadPromises = req.files.map(async (file) => {
 			console.log(
@@ -1078,12 +1081,17 @@ const uploadTripPhotos = async (req, res, next) => {
 		});
 
 		// Wait for all uploads to complete
-		const uploadedFileIds = await Promise.all(uploadPromises);
+		const outcomes = await Promise.allSettled(uploadPromises);
+		const uploadedFileIds = outcomes.filter(result => result.status === "fulfilled").map(result => result.value);
+		const failure = outcomes.find(result => result.status === "rejected");
+		if (failure) {
+			await cleanupUnattachedPhotos(tripId, userId, uploadedFileIds);
+			throw failure.reason;
+		}
 		console.log("All photos processed and uploaded:", uploadedFileIds);
 
 		// Add the new photo file IDs to the trip's photos array
-		trip.photos.push(...uploadedFileIds);
-		await trip.save(); // Save the updated trip document
+		await appendUploadedPhotos({ model: Trip, targetId: tripId, userId, tripId, ids: uploadedFileIds });
 
 		res.status(200).json({
 			message: `${uploadedFileIds.length} photos uploaded successfully.`,

@@ -6,6 +6,7 @@ const Trip = require("../models/Trip");
 const storageService = require("../services/storageService");
 const sharp = require("sharp");
 const path = require("path");
+const { assertWritableTrip, checkAssociatedRecommendationAfterWrite, cleanupUnattachedPhotos, appendUploadedPhotos } = require("../services/mobileTripWriteGuard");
 
 /**
  * @desc    Processes an array of pending recommendation data from a JSON payload
@@ -25,6 +26,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 
 	for (const recData of pendingRecommendations) {
 		try {
+			await assertWritableTrip(tripId, userId);
 			const identity = idempotent ? { user: userId, associatedTrip: tripId, clientUploadId: recData.uploadId } : null;
 			if (identity) {
 				const existing = await Recommendation.findOne(identity);
@@ -139,6 +141,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 				source: recData.source || "TRACKING", // More specific source
 			};
 
+			await assertWritableTrip(tripId, userId);
 			let savedRecommendation;
 			try { savedRecommendation = await Recommendation.create({ ...recommendationToSave, ...(identity || {}) }); }
 			catch (error) {
@@ -146,6 +149,7 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 				savedRecommendation = await Recommendation.findOne(identity);
 				if (!savedRecommendation) throw error;
 			}
+			await checkAssociatedRecommendationAfterWrite(savedRecommendation, userId);
 			createdRecommendationsInfo.push({
 				id: savedRecommendation._id,
 				...(idempotent ? { uploadId: recData.uploadId } : {}),
@@ -178,6 +182,7 @@ const createSingleRecommendationJson = async (req, res, next) => {
 		// Ensure associatedTrip is explicitly null if not provided or empty,
 		// to be compatible with how processPendingRecommendations might use it.
 		const associatedTripId = recommendationData.associatedTrip ? recommendationData.associatedTrip : null;
+		await assertWritableTrip(associatedTripId, userId);
 
 		// Basic validation for the single recommendation object
 		if (
@@ -292,6 +297,9 @@ const updateRecommendationJson = async (req, res, next) => {
 			});
 		}
 
+		await assertWritableTrip(recommendation.associatedTrip, userId);
+		if (updateData.associatedTrip !== undefined) await assertWritableTrip(updateData.associatedTrip, userId);
+
 		// Update fields
 		if (updateData.name !== undefined) recommendation.name = updateData.name;
 		if (updateData.description !== undefined) recommendation.description = updateData.description;
@@ -397,7 +405,9 @@ const updateRecommendationJson = async (req, res, next) => {
 		}
 
 		await assertOwnedPhotos(recommendation.photos || [], userId);
+		await assertWritableTrip(recommendation.associatedTrip, userId);
 		const updatedRecommendation = await recommendation.save();
+		await checkAssociatedRecommendationAfterWrite(updatedRecommendation, userId);
 
 		res.status(200).json(updatedRecommendation);
 	} catch (error) {
@@ -575,14 +585,15 @@ const uploadRecommendationPhotos = async (req, res, next) => {
 	if (!req.files?.length) return res.status(400).json({ message: "No photo files were uploaded" });
 
 	/* --- authorisation -------------------------------------------------- */
-	const recommendation = await Recommendation.findById(recommendationId).select("_id user photos");
+	const recommendation = await Recommendation.findById(recommendationId).select("_id user photos associatedTrip");
 	if (!recommendation) return res.status(404).json({ message: "Recommendation not found" });
 
 	if (recommendation.user.toString() !== userId.toString()) return res.status(403).json({ message: "Not authorised" });
 
 	/* --- process & store each file ------------------------------------- */
 	try {
-		const uploadedIds = await Promise.all(
+		await assertWritableTrip(recommendation.associatedTrip, userId);
+		const outcomes = await Promise.allSettled(
 			req.files.map(async (file) => {
 				/* ▸  keep aspect ratio – resize only if necessary             */
 				const { data, info } = await sharp(file.buffer)
@@ -611,8 +622,13 @@ const uploadRecommendationPhotos = async (req, res, next) => {
 			})
 		);
 
-		recommendation.photos.push(...uploadedIds);
-		await recommendation.save();
+		const uploadedIds = outcomes.filter(result => result.status === "fulfilled").map(result => result.value);
+		const failure = outcomes.find(result => result.status === "rejected");
+		if (failure) {
+			await cleanupUnattachedPhotos(recommendation.associatedTrip, userId, uploadedIds);
+			throw failure.reason;
+		}
+		await appendUploadedPhotos({ model: Recommendation, targetId: recommendationId, userId, tripId: recommendation.associatedTrip, ids: uploadedIds, recommendation: true });
 		// console.log(`uploadRecommendationPhotos: recommendation ${recommendation} `);
 		res.status(200).json({ message: "Photos uploaded", photoIds: uploadedIds });
 	} catch (err) {

@@ -70,6 +70,7 @@ app.get("/api", (req, res) => {
 // Mount specific routers
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
+app.use("/api/mobile", require("./routes/mobileRoutes"));
 app.use("/api/trips", require("./routes/tripRoutes"));
 app.use("/api/photos", require("./routes/photoRoutes"));
 app.use("/api/recommendations", require("./routes/recommendationRoutes"));

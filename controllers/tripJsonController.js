@@ -5,6 +5,7 @@ const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const { processPendingRecommendations } = require("./recommendationJsonController"); // Import the new function
 const { json } = require("express");
+const { assertRecordingNotDeleted } = require("../services/mobileTripWriteGuard");
 const { fingerprint, validKey, httpError, requireUploadIndexes } = require("../services/uploadIdempotency");
 
 exports.createRecordingUpload = (req, res, next) => {
@@ -25,6 +26,7 @@ exports.createTripJson = async (req, res, next) => {
 			if (!Array.isArray(children) || children.some(child => !validKey(child.uploadId))
 				|| new Set(children.map(child => child.uploadId)).size !== children.length) throw httpError(400, "Invalid recommendation upload identities");
 			await requireUploadIndexes(Trip, Recommendation);
+			await assertRecordingNotDeleted(userId, req.body.uploadId);
 			uploadFingerprint = fingerprint(req.body);
 		}
 		const {
@@ -160,6 +162,7 @@ exports.createTripJson = async (req, res, next) => {
 			.populate("user", "username profilePictureUrl city country")
 			.lean();
 
+		if (reliable) await assertRecordingNotDeleted(userId, req.body.uploadId, savedTrip);
 		res.status(201).json({
 			trip: populatedTrip,
 			recommendationsOutcome: recommendationsOutcome,
@@ -167,6 +170,9 @@ exports.createTripJson = async (req, res, next) => {
 		});
 	} catch (err) {
 		console.error("createTripJson error:", err);
+		if (!res.headersSent && err.code === "TRIP_DELETED") {
+			return res.status(410).json({ code: err.code, tripId: err.tripId, uploadId: err.uploadId, message: err.message });
+		}
 		if (!res.headersSent) {
 			next(err);
 		}
