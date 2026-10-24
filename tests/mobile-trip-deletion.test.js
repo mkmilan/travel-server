@@ -38,6 +38,7 @@ function fixture(options = {}) {
     Receipt, connection: { startSession: async () => session },
     storage: { deleteFile: async file => { assert.equal(trip, null); if (failed === file) throw new Error('storage unavailable'); removed.push(file); } },
     findFile: async file => options.missing ? null : { metadata: options.unknownOwner ? {} : { userId: options.foreignOwner && file === photo ? other : owner } },
+    hasChunks: async () => !!options.orphanChunks,
     isValidId: value => /^[a-f0-9]{24}$/.test(value),
   });
   return { service, removed, calls, get trip() { return trip; }, get receipt() { return receipt; }, get children() { return children; }, recover() { failed = null; } };
@@ -102,4 +103,11 @@ test('new route is separately gated and legacy DELETE/storage implementation unt
  const storage = fs.readFileSync('services/storageService.js', 'utf8');
  assert.match(storage, /gfs\.openUploadStream\(filename/);
  assert.doesNotMatch(storage, /withTransaction|startSession|fileHash/);
+});
+
+test('missing file metadata with exact leftover chunks stays pending without guessing ownership', async () => {
+ const f = fixture({ missing: true, orphanChunks: true });
+ assert.equal((await f.service.deleteTrip(id, owner)).cleanupPending, true);
+ assert.deepEqual(f.receipt.pendingFiles, [photo, childPhoto]); assert.deepEqual(f.removed, []);
+ assert.equal((await f.service.deleteTrip(id, owner)).cleanupPending, true);
 });

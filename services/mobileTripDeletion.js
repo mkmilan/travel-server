@@ -3,7 +3,7 @@ const same = (a, b) => String(a) === String(b);
 const unique = values => [...new Set(values.filter(Boolean).map(String))];
 
 // Dependencies are injectable so failure/retry tests never need a database.
-function createTripDeletionService({ Trip, Recommendation, User, Receipt, connection, storage, findFile, isValidId }) {
+function createTripDeletionService({ Trip, Recommendation, User, Receipt, connection, storage, findFile, hasChunks, isValidId }) {
   async function cleanup(receipt) {
     const owner = receipt.user;
     for (const fileId of receipt.pendingFiles || []) {
@@ -15,6 +15,9 @@ function createTripDeletionService({ Trip, Recommendation, User, Receipt, connec
           || await User.exists({ profilePictureUrl: fileId });
         if (!referenced && isValidId(fileId)) {
           const file = await findFile(fileId);
+          // A missing file document is not proof that its chunks are gone.
+          // Without uploader metadata we cannot safely remove ambiguous chunks.
+          if (!file && await hasChunks(fileId)) throw error(503, 'Exact file chunks remain; storage review is required.');
           // Legacy/malformed/foreign ownership is deliberately not deletion authority.
           if (file && same(file.metadata?.userId, owner)) await storage.deleteFile(fileId, owner);
         }
@@ -86,6 +89,7 @@ function defaultService() {
       Receipt: require('../models/MobileTripDeletion'), connection: mongoose.connection,
       storage: require('./storageService'), isValidId: mongoose.isObjectIdOrHexString,
       findFile: id => mongoose.connection.db.collection('gpxUploads.files').findOne({ _id: new mongoose.Types.ObjectId(id) }),
+      hasChunks: async id => !!await mongoose.connection.db.collection('gpxUploads.chunks').findOne({ files_id: new mongoose.Types.ObjectId(id) }, { projection: { _id: 1 } }),
     });
   }
   return service;
