@@ -111,3 +111,29 @@ test('missing file metadata with exact leftover chunks stays pending without gue
  assert.deepEqual(f.receipt.pendingFiles, [photo, childPhoto]); assert.deepEqual(f.removed, []);
  assert.equal((await f.service.deleteTrip(id, owner)).cleanupPending, true);
 });
+
+test('overlapping real storage retries retain exact pending ID after partial chunk deletion failure', async () => {
+const fs=require('fs'),vm=require('vm'),path=require('path'),{createRequire}=require('module'),{EventEmitter}=require('events'),assert=require('assert/strict');
+const root=process.cwd(),local=createRequire(path.join(root,'package.json'));
+const {createTripDeletionService}=local('./services/mobileTripDeletion');
+const user='a'.repeat(24),trip='b'.repeat(24),photo='c'.repeat(24);
+let file={metadata:{userId:user}},chunks=true,reads=0,removed;const signal=new Promise(r=>removed=r);
+const connection=new EventEmitter();connection.db={};
+// Matches actual mongodb GridFSBucket.delete ordering: metadata delete, chunks delete.
+class Bucket {find(){return {limit(){return {toArray:async()=>file?[file]:[]}}}} async delete(){file=null;removed();throw Error('Synthetic failure deleting chunks after metadata deletion');}}
+const filename=path.join(root,'services/storageService.js'),real=createRequire(filename),fixtureModule={exports:{}};
+const stubs={mongoose:{connection},mongodb:{GridFSBucket:Bucket,ObjectId:local('mongodb').ObjectId}};
+vm.runInNewContext(fs.readFileSync(filename,'utf8'),{module:fixtureModule,exports:fixtureModule.exports,require:id=>stubs[id]||real(id),console:{log(){},error(){},warn(){}},Buffer},{filename});connection.emit('open');
+const receipt={_id:trip,user,pendingFiles:[photo],phase:'records-deleted'};
+const query=()=>({lean:async()=>structuredClone(receipt)});
+const service=createTripDeletionService({Trip:{exists:async()=>false},Recommendation:{exists:async()=>false},User:{exists:async()=>false},Receipt:{findById:query,findOne:query,updateOne:async(filter,update)=>{if(update.$pull)receipt.pendingFiles=receipt.pendingFiles.filter(id=>id!==update.$pull.pendingFiles);if(update.$set&&(!filter.pendingFiles||receipt.pendingFiles.length===0))Object.assign(receipt,update.$set);return {matchedCount:1};}},connection:{},storage:fixtureModule.exports,isValidId:()=>true,findFile:async()=>{const snapshot=file;if(++reads===2)await signal;return snapshot;},hasChunks:async()=>chunks});
+const responses = await Promise.all([service.deleteTrip(trip,user),service.deleteTrip(trip,user)]);
+assert.equal(chunks,true); assert.equal(file,null);
+assert.deepEqual(receipt.pendingFiles,[photo]); assert.equal(receipt.phase,'records-deleted');
+assert(responses.every(r=>r.cleanupPending));
+assert.equal((await service.deleteTrip(trip,user)).cleanupPending,true);
+// Once exact chunks are independently confirmed gone, a retry can settle.
+chunks=false;
+assert.equal((await service.deleteTrip(trip,user)).cleanupPending,false);
+assert.deepEqual(receipt.pendingFiles,[]); assert.equal(receipt.phase,'complete');
+});

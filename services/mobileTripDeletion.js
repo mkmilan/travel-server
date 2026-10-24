@@ -19,7 +19,12 @@ function createTripDeletionService({ Trip, Recommendation, User, Receipt, connec
           // Without uploader metadata we cannot safely remove ambiguous chunks.
           if (!file && await hasChunks(fileId)) throw error(503, 'Exact file chunks remain; storage review is required.');
           // Legacy/malformed/foreign ownership is deliberately not deletion authority.
-          if (file && same(file.metadata?.userId, owner)) await storage.deleteFile(fileId, owner);
+          if (file && same(file.metadata?.userId, owner)) {
+            await storage.deleteFile(fileId, owner);
+            // An overlapping retry can see missing metadata and resolve while
+            // another delete failed to remove chunks. Keep the exact ID pending.
+            if (await hasChunks(fileId)) throw error(503, 'Exact file chunks remain; storage review is required.');
+          }
         }
         // Retained shared/foreign files are not failed cleanup: they remain in use
         // or are outside this owner's deletion authority.
