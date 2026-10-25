@@ -9,6 +9,7 @@ const path = require('node:path');
 const net = require('node:net');
 const mongoose = require('mongoose');
 const sharp = require('sharp');
+const { gzipSync } = require('node:zlib');
 const { once } = require('node:events');
 const ROOT = path.resolve(__dirname, '..');
 const FIXTURE_PASSWORD = 'disposable-fixture-password';
@@ -80,6 +81,10 @@ async function main() {
     };
     const a=await session(owner.email), b=await session(stranger.email), f=await session(follower.email);
     const headers=s=>({Authorization:`Bearer ${s.token}`,Cookie:s.cookie,'X-CSRF-Token':s.csrf});
+    const compressedLogin=await request('/auth/login',{method:'POST',headers:{...headers(a),'Content-Type':'application/json','Content-Encoding':'gzip'},body:gzipSync(Buffer.from(JSON.stringify({email:owner.email,password:FIXTURE_PASSWORD})))});
+    assert.equal(compressedLogin.status,200);assert((await compressedLogin.json()).token);check('compressed JSON login preserves real CSRF/authentication flow');
+    const malformedJson=await request('/auth/login',{method:'POST',headers:{...headers(a),'Content-Type':'application/json'},body:'{"unfinished":'});
+    assert.equal(malformedJson.status,400);assert.equal((await request('/auth/me',{headers:headers(a)})).status,200);check('malformed JSON rejects with 400 and actual API remains available');
     assert.equal((await request('/auth/me',{headers:{Cookie:a.cookie}})).status,200);check('real bcrypt login and cookie authentication');
     assert.equal((await request('/auth/me')).status,401);check('unauthenticated API returns 401 rather than 500');
     const badLogin=await request('/auth/login',{method:'POST',headers:{...headers(a),'Content-Type':'application/json'},body:JSON.stringify({email:owner.email,password:'wrong-fixture-password'})});assert.equal(badLogin.status,401);check('invalid password returns 401');
@@ -95,6 +100,29 @@ async function main() {
     const upload=await request(`/trips/${trip.id}/photos`,{method:'POST',headers:headers(a),body:form});
     assert.equal(upload.status,200,await upload.clone().text());
     const photoId=(await upload.json()).photoIds[0];assert(photoId);check('real Multer + Sharp + GridFS photo upload');
+    for(const format of ['jpeg','webp']){
+      const bytes=await sharp({create:{width:3,height:2,channels:3,background:'#345678'}})[format]().toBuffer();
+      const additional=new FormData();additional.append('photos',new Blob([bytes],{type:`image/${format}`}),`fixture.${format}`);
+      const accepted=await request(`/trips/${trip.id}/photos`,{method:'POST',headers:headers(a),body:additional});assert.equal(accepted.status,200);
+      const id=(await accepted.json()).photoIds[0];assert(id);
+      const decoded=await request(`/photos/${id}`,{headers:headers(a)});assert.equal(decoded.status,200);
+      assert.equal((await sharp(Buffer.from(await decoded.arrayBuffer())).metadata()).format,'webp');
+      assert.equal((await request(`/trips/${trip.id}/photos/${id}`,{method:'DELETE',headers:headers(a)})).status,200);
+    }check('JPEG and WebP uploads decode, stream as WebP, and delete through real API');
+    const filesBefore=await mongoose.connection.db.collection('gpxUploads.files').countDocuments();
+    const chunksBefore=await mongoose.connection.db.collection('gpxUploads.chunks').countDocuments();
+    const photosBefore=(await Trip.findById(trip.id)).photos.map(String);
+    for(const mixed of [false,true]){
+      const invalid=new FormData();
+      if(mixed)invalid.append('photos',new Blob([image],{type:'image/png'}),'valid-fixture.png');
+      invalid.append('photos',new Blob(['not an image'],{type:'image/png'}),'invalid-fixture.png');
+      const rejected=await request(`/trips/${trip.id}/photos`,{method:'POST',headers:headers(a),body:invalid});
+      assert.equal(rejected.status,500); // Existing API contract: decoder errors are not mapped to 400.
+      assert.match((await rejected.json()).message,/Image processing failed/);
+      assert.equal(await mongoose.connection.db.collection('gpxUploads.files').countDocuments(),filesBefore);
+      assert.equal(await mongoose.connection.db.collection('gpxUploads.chunks').countDocuments(),chunksBefore);
+      assert.deepEqual((await Trip.findById(trip.id)).photos.map(String),photosBefore);
+    }check('invalid and mixed valid/invalid images fail without persisting attachments or GridFS orphans');
     const stored=await mongoose.connection.db.collection('gpxUploads.files').findOne({_id:new mongoose.Types.ObjectId(photoId)});
     assert.equal(stored.metadata.userId,owner.id);assert.equal(stored.metadata.tripId,trip.id);check('server-written owner/trip metadata');
     assert.equal((await request(`/photos/${photoId}`)).status,404);check('anonymous cannot read private image');

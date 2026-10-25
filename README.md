@@ -94,7 +94,7 @@ and uploads against the disposable database before any device build or release.
 
 ## Remaining review work
 
-This is not a complete security audit or an all-clear. The locked dependency tree returned zero `npm audit` findings on 2026-10-21 after targeted updates; this is not proof of complete application security. Recommendation JSON attachments and all storage deletions now validate
+This is not a complete security audit or an all-clear. The locked dependency tree returned zero `npm audit` findings on 2026-10-21, but new advisories were published afterward. The [focused 2026-10-25 parser update and regression report](docs/dependency-security-2026-10-25.md) records the patched `body-parser`, tests and remaining configuration-inapplicable Multer warning. Recommendation JSON attachments and all storage deletions now validate
 server-written file ownership, including copied references. Public profile counts, photo galleries, recommendations and POIs now follow trip visibility; settings are owner-only. These fixes do not
 claim to solve every privacy endpoint. Do not deploy this partial
 phase until those findings and the integration gates above are resolved.

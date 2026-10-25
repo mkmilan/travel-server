@@ -39,3 +39,37 @@ test('malformed multipart is rejected and server remains available', async () =>
 	const form = new FormData(); form.append('photo', image(), 'ok.jpg');
 	assert.equal((await fetch(base + '/single', { method: 'POST', body: form })).status, 200);
 });
+
+test('the actual image filter completes synchronously for accept and reject paths', () => {
+	// Guard the assumption that makes GHSA-q7qp-rjg7-q26m inapplicable here.
+	const fs = require('node:fs'), vm = require('node:vm');
+	let options;
+	vm.runInNewContext(fs.readFileSync(require.resolve('../config/multerConfig'), 'utf8'), {
+		module: { exports: {} },
+		require(name) {
+			if (name !== 'multer') return require(name);
+			return Object.assign(config => { options = config; return { single() {}, array() {} }; }, { memoryStorage() { return {}; } });
+		},
+	});
+	for (const [originalname, mimetype, accepted] of [
+		['trip.JPEG', 'image/jpeg', true], ['trip.png', 'image/png', true],
+		['trip.gif', 'image/gif', true], ['trip.webp', 'image/webp', true],
+		['trip.jpg.exe', 'image/jpeg', false], ['trip.jpg', 'text/plain', false],
+	]) {
+		let called = 0;
+		options.fileFilter({}, { originalname, mimetype }, (error, result) => {
+			called++; assert.equal(result, accepted); assert.equal(Boolean(error), !accepted);
+		});
+		assert.equal(called, 1, 'fileFilter must finish before returning; async filters need a patched Multer');
+	}
+});
+
+test('the configured 50 MiB per-file limit rejects oversized uploads and permits a later valid upload', async () => {
+	const form = new FormData();
+	form.append('photo', new Blob([Buffer.alloc(50 * 1024 * 1024 + 1)], { type: 'image/jpeg' }), 'oversized.jpg');
+	const response = await fetch(base + '/single', { method: 'POST', body: form, signal: AbortSignal.timeout(10000) });
+	assert.equal(response.status, 400);
+	assert.deepEqual(await response.json(), { error: 'LIMIT_FILE_SIZE' });
+	const valid = new FormData(); valid.append('photo', image(), 'ok.jpg');
+	assert.equal((await fetch(base + '/single', { method: 'POST', body: valid })).status, 200);
+});
