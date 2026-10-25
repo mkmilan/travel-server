@@ -204,6 +204,8 @@ const tripSchema = new mongoose.Schema(
 tripSchema.index({ simplifiedRoute: "2dsphere" });
 // Compound index if frequently querying user's trips by date
 tripSchema.index({ user: 1, startDate: -1 });
+// Discover filters by format/visibility, then pages in stable newest-upload order.
+tripSchema.index({ format: 1, defaultTripVisibility: 1, createdAt: -1, _id: -1 });
 
 const Trip = mongoose.model("Trip", tripSchema);
 

@@ -446,6 +446,63 @@ exports.getTripsFeedJson = async (req, res, next) => {
 	}
 };
 
+/* GET /api/v2/trips/json/discover (protected). Keep Following's behavior separate. */
+exports.getDiscoverTripsJson = async (req, res, next) => {
+	const positiveInteger = (value, fallback) => value === undefined ? fallback
+		: typeof value === "string" && /^[1-9]\d*$/.test(value) ? Number(value) : NaN;
+	const page = positiveInteger(req.query.page, 1);
+	const limit = positiveInteger(req.query.limit, 10);
+	const skip = (page - 1) * limit;
+	if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit) || limit > 100 || !Number.isSafeInteger(skip)) {
+		return res.status(400).json({ message: "page must be a positive integer and limit must be an integer from 1 to 100" });
+	}
+
+	try {
+		// Match before pagination AND counting: followers-only/private trips never enter Discover.
+		const match = { format: "json", defaultTripVisibility: "public" };
+		const trips = await Trip.aggregate([
+			{ $match: match },
+			{ $sort: { createdAt: -1, _id: -1 } },
+			{ $skip: skip },
+			{ $limit: limit },
+			{ $lookup: { from: "users", localField: "user", foreignField: "_id", as: "userDetails" } },
+			{ $unwind: { path: "$userDetails", preserveNullAndEmptyArrays: true } },
+			{ $lookup: { from: "recommendations", localField: "_id", foreignField: "associatedTrip", as: "tripRecommendations" } },
+			{ $project: {
+				_id: 1,
+				title: 1,
+				startDate: 1,
+				description: { $substrCP: ["$description", 0, 150] },
+				defaultTravelMode: 1,
+				defaultTripVisibility: 1,
+				simplifiedRoute: 1,
+				distanceMeters: 1,
+				durationMillis: 1,
+				likesCount: { $size: { $ifNull: ["$likes", []] } },
+				commentsCount: { $size: { $ifNull: ["$comments", []] } },
+				recommendationCount: { $size: "$tripRecommendations" },
+				isLikedByCurrentUser: { $in: [req.user._id, { $ifNull: ["$likes", []] }] },
+				createdAt: 1,
+				user: {
+					_id: "$userDetails._id",
+					username: "$userDetails.username",
+					profilePictureUrl: "$userDetails.profilePictureUrl",
+					city: "$userDetails.city",
+					country: "$userDetails.country",
+				},
+				startLocationName: 1,
+				endLocationName: 1,
+			} },
+		]);
+		const totalCount = await Trip.countDocuments(match);
+		// Like state is viewer-specific and a public trip can become private between refreshes.
+		res.set("Cache-Control", "private, no-store");
+		res.status(200).json({ items: trips, page, limit, totalPages: Math.ceil(totalCount / limit), totalCount });
+	} catch (error) {
+		next(error);
+	}
+};
+
 /**
  * @desc    Get JSON trips for a specific user, respecting visibility
  * @route   GET /api/v2/trips/json/user/:userId

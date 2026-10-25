@@ -47,6 +47,11 @@ external maps or a complete product regression suite. No real data is needed.
 
 ## Before running the full application
 
+The additive protected Discover endpoint and its isolated verification are
+documented in [docs/discover-feed.md](docs/discover-feed.md). The existing
+Following endpoint remains unchanged. No deployed service or live database was
+modified by this feature's local implementation/tests.
+
 1. Provision a **local, disposable MongoDB** instance, bound to loopback, with an
    empty `travel_development` database. GridFS uses that same database. Do not use
    an existing production URI or copy real user data.
