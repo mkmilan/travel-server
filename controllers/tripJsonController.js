@@ -203,9 +203,11 @@ exports.getTripJsonById = async (req, res, next) => {
 			isOwner ||
 			(trip.defaultTripVisibility === "followers_only" && isFollower)
 		) {
-			// Fetch associated recommendations
+			// The reused detail/sheet must honor the same creator check as search:
+			// a foreign recommendation cannot become readable by claiming this trip.
 			const recommendations = await Recommendation.find({
 				associatedTrip: tripId,
+				user: trip.user._id,
 			})
 				.populate("user", "username profilePictureUrl city country") // Populate user details for recommendations
 				.lean(); // Use .lean() for recommendations as well

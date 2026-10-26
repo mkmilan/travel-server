@@ -170,3 +170,46 @@ test('bare-array recommendation callers retain exact category-as-text matching; 
   });
   assert.deepEqual((await call({ type: 'recommendations', q: 'wild_spot', envelope: undefined })).body, []);
 });
+test('only mobile envelope filters linked recommendations to JSON before pagination/count; legacy GPX remains eligible', async t => {
+  for (const envelope of ['true', undefined, 'false']) {
+    t.mock.method(Recommendation, 'aggregate', async pipeline => {
+      const linkedLookup = pipeline.find(stage => stage.$lookup?.from === 'trips').$lookup;
+      assert.equal(linkedLookup.pipeline[0].$project.format, 1);
+      const visibility = pipeline.find(stage => stage.$match?.$expr?.$or).$match.$expr.$or;
+      const formatChecks = visibility[1].$and.filter(clause => clause.$eq?.[0] === '$linkedTrip.format');
+      assert.deepEqual(formatChecks, envelope === 'true' ? [{ $eq: ['$linkedTrip.format', 'json'] }] : []);
+      assert.deepEqual(visibility[0].$and, [{ $eq: [{ $ifNull: ['$associatedTrip', null] }, null] }, { $eq: ['$user', viewerId] }]);
+      return envelope === 'true' ? [{ results: [], metadata: [] }] : [];
+    });
+    assert.equal((await call({ type: 'recommendations', envelope })).error, undefined);
+  }
+});
+test('reused JSON detail only queries same-owner associated recommendations for every permitted role', async t => {
+  const { getTripJsonById } = require('../controllers/tripJsonController');
+  const ownerId = new mongoose.Types.ObjectId('b'.repeat(24));
+  const tripId = new mongoose.Types.ObjectId('c'.repeat(24));
+  const strangerId = new mongoose.Types.ObjectId('d'.repeat(24));
+  const recommendations = [{ _id: 'valid-same-owner', user: { _id: ownerId } }];
+  for (const visibility of ['public', 'followers_only', 'private']) {
+    for (const [role, user] of [['owner', { _id: ownerId }], ['follower', { _id: viewerId }], ['stranger', { _id: strangerId }], ['anonymous', null]]) {
+      let status, body, error, queries = 0;
+      t.mock.method(Trip, 'findById', id => {
+        assert.equal(id, String(tripId));
+        return { populate() { return this; }, lean: async () => ({ _id: tripId, format: 'json', defaultTripVisibility: visibility, user: { _id: ownerId, followers: [viewerId] } }) };
+      });
+      t.mock.method(Recommendation, 'find', filter => {
+        queries++;
+        assert.deepEqual(filter, { associatedTrip: String(tripId), user: ownerId });
+        return { populate() { return this; }, lean: async () => recommendations };
+      });
+      await getTripJsonById({ params: { tripId: String(tripId) }, user }, {
+        status(value) { status = value; return this; }, json(value) { body = value; return this; },
+      }, value => { error = value; });
+      assert.equal(error, undefined);
+      const allowed = visibility === 'public' || role === 'owner' || (visibility === 'followers_only' && role === 'follower');
+      assert.equal(status, allowed ? 200 : role === 'anonymous' ? 401 : 403, `${visibility}/${role}`);
+      assert.equal(queries, allowed ? 1 : 0);
+      if (allowed) assert.deepEqual(body.recommendations, recommendations);
+    }
+  }
+});

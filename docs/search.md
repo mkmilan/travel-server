@@ -43,13 +43,20 @@ legacy global API: only the owner sees a standalone recommendation in search.
 Every linked recommendation must have an existing trip owned by its creator,
 and the viewer must be able to read that trip. Orphan/foreign associations are
 excluded even for the recommendation owner. This does **not** alter the global
-recommendation visibility helper or public standalone detail policy. Linked GPX
-recommendations continue to inherit trip visibility; no GPX code is changed.
+recommendation visibility helper or public standalone detail policy. Mobile
+envelope results additionally require linked trips to be JSON, because the
+existing mobile linked-trip detail screen does not support GPX. Bare-array
+callers retain readable GPX-linked recommendations; no GPX code/data is changed.
 
 Trip cards include author location, travel mode, map/route, authoritative social
 counts and viewer like state, plus a count of same-owner trip recommendations.
 Recommendation cards retain `photos`, `associatedTrip`, location and attributes,
 so existing cards/detail navigation need no extra detail request per result.
+One necessary adjacent read-side privacy fix also limits `getTripJsonById`'s
+recommendation list to the trip creator. Without it, a forged foreign-author
+association excluded by search/counts reappeared in the reused recommendation
+sheet. Valid same-owner detail results are unchanged; no records are migrated
+or deleted.
 `photos` and the legacy `coverPhotoUrl` value contain media IDs, not public URLs;
 existing authorized photo routes still check access on every fetch.
 
@@ -84,7 +91,8 @@ The search integration harness refuses `.env` and external URI arguments. It
 starts Mongo and the real API on temporary loopback ports with synthetic users,
 trips, recommendations and GridFS bytes, then removes its temporary database.
 Its 16 grouped checks cover privacy-before-pagination/counts, all viewer roles,
-standalone/orphan/foreign associations, deterministic ties, all text types,
+standalone/orphan/foreign associations, mobile-only GPX exclusion with legacy
+compatibility, deterministic ties, all text types,
 categories, Unicode/regex literals, bad parameters, card fields/detail routes,
 protected thumbnails and changed privacy/follow access. Image bytes are synthetic
 transport fixtures, not a native image-rendering test.

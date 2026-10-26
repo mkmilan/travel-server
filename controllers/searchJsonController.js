@@ -51,7 +51,7 @@ function tripPipeline(rx, viewerId) {
 	];
 }
 
-function recommendationPipeline(rx, category, viewerId, legacyCategorySearch) {
+function recommendationPipeline(rx, category, viewerId, legacySearch) {
 	// This search intentionally has a narrower standalone policy than the legacy
 	// global recommendation API. Do not change that API's shared visibility helper.
 	const standalone = viewerId ? [{ $and: [
@@ -61,11 +61,11 @@ function recommendationPipeline(rx, category, viewerId, legacyCategorySearch) {
 		{ $match: { $or: [
 			{ name: rx }, { description: rx },
 			// Retain old category-as-text matches for existing bare-array callers only.
-			...(legacyCategorySearch ? [{ primaryCategory: new RegExp(`^${rx.source}$`, "i") }] : []),
+			...(legacySearch ? [{ primaryCategory: new RegExp(`^${rx.source}$`, "i") }] : []),
 		], ...(category ? { primaryCategory: category } : {}) } },
 		...authorLookup,
 		{ $lookup: { from: "trips", localField: "associatedTrip", foreignField: "_id", pipeline: [
-			{ $project: { user: 1, defaultTripVisibility: 1 } },
+			{ $project: { user: 1, defaultTripVisibility: 1, format: 1 } },
 		], as: "linkedTrip" } },
 		{ $unwind: { path: "$linkedTrip", preserveNullAndEmptyArrays: true } },
 		{ $match: { $expr: { $or: [
@@ -74,6 +74,8 @@ function recommendationPipeline(rx, category, viewerId, legacyCategorySearch) {
 				{ $ne: [{ $ifNull: ["$associatedTrip", null] }, null] },
 				{ $eq: ["$linkedTrip.user", "$user"] }, // Reject orphan and foreign associations, even for their owner.
 				readableTrip(viewerId, "$linkedTrip.user", "$linkedTrip.defaultTripVisibility"),
+				// The existing mobile linked-trip screen supports JSON only. Legacy search keeps GPX.
+				...(legacySearch ? [] : [{ $eq: ["$linkedTrip.format", "json"] }]),
 			] },
 		] } } },
 	];

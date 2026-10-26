@@ -157,13 +157,13 @@ async function main() {
     await createRec(211, { _id: oid(9999) }, { _id: oid(108) }, { createdAt: later });
     await createRec(212, stranger, strangerFollower, { createdAt: later });
     const recGpx = await createRec(213, stranger, gpx);
-    const expectedRecs = [recGpx, recOwnPrivate, ownStandalone, recStranger, recFollower, recPublic].map(rec => rec.id);
+    const expectedRecs = [recOwnPrivate, ownStandalone, recStranger, recFollower, recPublic].map(rec => rec.id);
     const allRecs = await search('recommendations');
-    assert.deepEqual(allRecs.results.map(rec => rec._id), expectedRecs); assert.equal(allRecs.total, 6);
+    assert.deepEqual(allRecs.results.map(rec => rec._id), expectedRecs); assert.equal(allRecs.total, 5);
     const recPages = [];
     for (let page = 1; page <= 4; page++) {
       const result = await search('recommendations', { page, limit: 2 });
-      assert.equal(result.total, 6); assert.equal(result.hasMore, page < 3);
+      assert.equal(result.total, 5); assert.equal(result.hasMore, page < 3);
       recPages.push(...result.results.map(rec => rec._id));
     }
     assert.deepEqual(recPages, expectedRecs);
@@ -172,15 +172,17 @@ async function main() {
     assert(ownerRecs.results.some(rec => rec._id === otherStandalone.id));
     assert(ownerRecs.results.some(rec => rec._id === oid(203).toString()));
     assert(!ownerRecs.results.some(rec => rec._id === oid(209).toString()));
-    assert.deepEqual((await search('recommendations', {}, noFollowsToken)).results.map(rec => rec._id), [recGpx.id, recStranger.id, recPublic.id]);
+    assert.deepEqual((await search('recommendations', {}, noFollowsToken)).results.map(rec => rec._id), [recStranger.id, recPublic.id]);
     assert.deepEqual((await get('/v2/search?q=Searchfixture&type=recommendations', '')).map(rec => rec._id), [recGpx.id, recStranger.id, recPublic.id]);
-    check('only own standalone recommendations surface; valid associated GPX recommendations still inherit visibility without changing GPX code');
+    assert(!(await search('recommendations', {}, await login(stranger))).results.some(rec => rec._id === recGpx.id));
+    assert((await get('/v2/search?q=Searchfixture&type=recommendations', viewerToken)).some(rec => rec._id === recGpx.id));
+    check('mobile excludes unsupported GPX-linked recommendations even for owner; legacy bare-array retains them and owner standalone remains searchable');
     // The global legacy detail policy remains deliberately unchanged.
     assert.equal((await request(`/recommendations/${otherStandalone.id}`)).status, 200);
     check('legacy standalone recommendation detail stays public; search does not change global visibility policy');
     const categoryResults = await search('recommendations', { category: 'WILD_SPOT', q: 'riverside' });
     assert.deepEqual(categoryResults.results.map(rec => rec._id), expectedRecs.filter(id => id !== recStranger.id));
-    assert.equal(categoryResults.total, 5);
+    assert.equal(categoryResults.total, 4);
     assert.deepEqual((await search('recommendations', { category: 'CAFE', q: 'riverside' })).results.map(rec => rec._id), [recStranger.id]);
     assert.deepEqual((await search('recommendations', { category: 'CAMPSITE', q: 'riverside' })).results, []);
     check('recommendation text includes description; category enum is an exact additional filter, never a category-only catalog request');
@@ -192,12 +194,18 @@ async function main() {
     assert.equal(card.startLocationName, 'Fromtown'); assert.equal(card.endLocationName, 'Totown');
     assert.deepEqual(card.simplifiedRoute.coordinates, [[4, 50], [4.01, 50.01]]);
     assert.equal((await search('trips', {}, noFollowsToken)).results.find(trip => trip._id === publicTrip.id).isLikedByCurrentUser, false);
-    assert.equal((await get(`/v2/trips/json/${card._id}`))._id, card._id);
+    const tripDetail = await get(`/v2/trips/json/${card._id}`);
+    assert.equal(tripDetail._id, card._id);
+    assert.equal(tripDetail.recommendations.length, card.recommendationCount);
+    assert.deepEqual(tripDetail.recommendations.map(rec => rec._id), [recPublic.id]);
+    assert(!tripDetail.recommendations.some(rec => rec._id === oid(208).toString()));
+    // The legitimate creator gets the same safe sheet, not a special bypass.
+    assert.deepEqual((await get(`/v2/trips/json/${card._id}`, followedToken)).recommendations.map(rec => rec._id), [recPublic.id]);
     for (const row of [...full.results, ...allRecs.results]) {
       assert.equal(row.user.followers, undefined); assert.equal(row.user.email, undefined); assert.equal(row.user.password, undefined);
       assert.equal(row.likes, undefined); assert.equal(row.comments, undefined);
     }
-    check('trip cards have authoritative viewer-specific social/travel/map/author fields, same-owner recommendation count and existing detail route');
+    check('trip cards have authoritative social/travel/map/author fields; reused detail/sheet matches same-owner recommendation count and excludes forged associations for viewer and owner');
     const recCard = allRecs.results.find(rec => rec._id === recPublic.id);
     assert.equal(recCard.associatedTrip, publicTrip.id); assert.deepEqual(recCard.attributeTags, ['QUIET', 'SCENIC']);
     assert.deepEqual(recCard.location.coordinates, [4, 50]); assert.equal(recCard.rating, 4);
@@ -272,11 +280,11 @@ async function main() {
     // viewer.following deliberately still contains followed: author.followers is authoritative.
     assert(!(await search('trips')).results.some(trip => trip._id === followerTrip.id));
     assert(!(await search('recommendations')).results.some(rec => rec._id === recFollower.id));
-    assert.equal((await search('trips')).total, 4); assert.equal((await search('recommendations')).total, 4);
+    assert.equal((await search('trips')).total, 4); assert.equal((await search('recommendations')).total, 3);
     check('fresh searches/counts/media respect changed trip privacy and unfollow state even when viewer.following is stale');
     await User.updateOne({ _id: followed._id }, { $set: { followers: [viewer._id] } });
     await Trip.updateOne({ _id: publicTrip._id }, { $set: { defaultTripVisibility: 'public' } });
-    assert.equal((await search('trips')).total, 6); assert.equal((await search('recommendations')).total, 6);
+    assert.equal((await search('trips')).total, 6); assert.equal((await search('recommendations')).total, 5);
     check('visibility restoration is reflected without stale cached search metadata');
     console.log(`Search integration result: ${passed} checks passed; synthetic disposable data only.`);
   } finally {
