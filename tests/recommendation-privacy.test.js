@@ -34,7 +34,9 @@ test('V2 user listing trip lookup enforces matching creator and retains standalo
  await controller.getUserRecommendationsJson({params:{userId:owner},query:{}},{status(){return this;},json(){}},e=>{throw e;});
  for(const pipeline of pipelines){const lookup=pipeline.find(s=>s.$lookup?.from==='trips').$lookup;assert.equal(String(lookup.pipeline[0].$match.user),owner);}
 });
-for(const variant of ['legacy','json']){
+// V2 search now uses privacy-before-pagination aggregation; covered by search-json.test.js
+// and the disposable Mongo/HTTP search integration suite. Legacy/global policy stays unchanged.
+for(const variant of ['legacy']){
  test(`${variant} search filters private and orphan recommendations without public fallback`,async t=>{
   const Rec=require('../models/Recommendation'),Trip=require('../models/Trip');
   const handler=variant==='legacy'?require('../controllers/searchController').performSearch:require('../controllers/searchJsonController').performSearchJson;
