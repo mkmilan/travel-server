@@ -409,15 +409,13 @@ const followUser = async (req, res, next) => {
 			return next(new Error("You are already following this user."));
 		}
 
-		// --- Perform the follow ---
-		// Add userToFollow to currentUser's following list
-		currentUser.following.push(userIdToFollow);
-		// Add currentUser to userToFollow's followers list
-		userToFollow.followers.push(currentUserId);
-
-		// --- Save both documents ---
-		// Use Promise.all to save concurrently
-		await Promise.all([currentUser.save(), userToFollow.save()]);
+		// The duplicate check above preserves the sequential 400 contract, but
+		// simultaneous requests can both pass it. Add membership atomically so
+		// they cannot append duplicate IDs or overwrite unrelated relationships.
+		await Promise.all([
+			User.updateOne({ _id: currentUserId }, { $addToSet: { following: userIdToFollow } }),
+			User.updateOne({ _id: userIdToFollow }, { $addToSet: { followers: currentUserId } }),
+		]);
 
 		console.log(`User ${currentUserId} followed user ${userIdToFollow}`);
 		res.status(200).json({ message: `Successfully followed ${userToFollow.username}` });
@@ -464,14 +462,12 @@ const unfollowUser = async (req, res, next) => {
 			return next(new Error("User to unfollow not found."));
 		}
 
-		// --- Perform the unfollow ---
-		// Remove userToUnfollow from currentUser's following list
-		currentUser.following = currentUser.following.filter((id) => id.toString() !== userIdToUnfollow);
-		// Remove currentUser from userToUnfollow's followers list
-		userToUnfollow.followers = userToUnfollow.followers.filter((id) => id.toString() !== currentUserId.toString());
-
-		// --- Save both documents ---
-		await Promise.all([currentUser.save(), userToUnfollow.save()]);
+		// Remove only this membership from the current arrays, not a stale
+		// read snapshot. This also retains removal of all legacy duplicates.
+		await Promise.all([
+			User.updateOne({ _id: currentUserId }, { $pull: { following: userIdToUnfollow } }),
+			User.updateOne({ _id: userIdToUnfollow }, { $pull: { followers: currentUserId } }),
+		]);
 
 		console.log(`User ${currentUserId} unfollowed user ${userIdToUnfollow}`);
 		res.status(200).json({ message: `Successfully unfollowed ${userToUnfollow.username}` });

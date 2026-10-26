@@ -85,22 +85,33 @@ for (const handlerName of ['getUserProfileById', 'getPublicProfileByUserId']) {
 }
 
 test('active follow/unfollow controllers update the same arrays consumed by profiles and lists', async t => {
-  let saves = 0;
-  const current = { _id: viewerId, username: 'Synthetic viewer', following: [], followers: [], save: async () => { saves++; } };
-  const target = { _id: ownerId, username: 'Synthetic owner', following: [], followers: [], save: async () => { saves++; } };
+  let writes = 0;
+  const current = { _id: viewerId, username: 'Synthetic viewer', following: [], followers: [] };
+  const target = { _id: ownerId, username: 'Synthetic owner', following: [], followers: [] };
   t.mock.method(User, 'findById', async id => String(id) === String(viewerId) ? current : String(id) === String(ownerId) ? target : null);
+  t.mock.method(User, 'updateOne', async (filter, update) => {
+    writes++;
+    const user = String(filter._id) === String(viewerId) ? current : target;
+    const operator = Object.keys(update)[0];
+    assert.ok(['$addToSet', '$pull'].includes(operator));
+    const [[field, value]] = Object.entries(update[operator]);
+    if (operator === '$addToSet') {
+      if (!user[field].some(id => String(id) === String(value))) user[field].push(value);
+    } else user[field] = user[field].filter(id => String(id) !== String(value));
+    return { acknowledged: true, matchedCount: 1 };
+  });
   const req = { params: { userId: String(ownerId) }, user: { _id: viewerId } };
   let result = await call(controller.followUser, req);
   assert.equal(result.error, undefined);
   assert.equal(result.status, 200);
   assert.deepEqual(current.following.map(String), [String(ownerId)]);
   assert.deepEqual(target.followers.map(String), [String(viewerId)]);
-  assert.equal(saves, 2);
+  assert.equal(writes, 2);
 
   result = await call(controller.followUser, req);
   assert.equal(result.status, 400);
   assert.match(result.error.message, /already following/);
-  assert.equal(saves, 2);
+  assert.equal(writes, 2);
   assert.equal(current.following.length, 1);
 
   result = await call(controller.unfollowUser, req);
@@ -108,7 +119,7 @@ test('active follow/unfollow controllers update the same arrays consumed by prof
   assert.equal(result.status, 200);
   assert.deepEqual(current.following, []);
   assert.deepEqual(target.followers, []);
-  assert.equal(saves, 4);
+  assert.equal(writes, 4);
 
   result = await call(controller.unfollowUser, req);
   assert.equal(result.error, undefined);
