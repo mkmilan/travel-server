@@ -141,6 +141,8 @@ const getPublicProfileByUserId = async (req, res, next) => {
 			_id: user._id,
 			username: user.username,
 			bio: user.bio,
+			city: user.city,
+			country: user.country,
 			profilePictureUrl: user.profilePictureUrl,
 			followersCount: user.followers?.length || 0, // Ensure followers array exists
 			followingCount: user.following?.length || 0, // Ensure following array exists
@@ -946,6 +948,8 @@ const getUserFollowersV2 = async (req, res, next) => {
 		},
 		{ $unwind: "$user" },
 		{ $replaceRoot: { newRoot: "$user" } },
+		// Aggregation lookups bypass User schema select:false; allow only public list fields.
+		{ $project: { _id: 1, username: 1, profilePictureUrl: 1, followers: 1 } },
 		{ $sort: { username: 1 } },
 		{ $skip: skip },
 		{ $limit: limit },
@@ -978,6 +982,8 @@ const getUserFollowingV2 = async (req, res, next) => {
 		},
 		{ $unwind: "$user" },
 		{ $replaceRoot: { newRoot: "$user" } },
+		// Match the public list contract, including followers for client button state.
+		{ $project: { _id: 1, username: 1, profilePictureUrl: 1, followers: 1 } },
 		{ $sort: { username: 1 } },
 		{ $skip: skip },
 		{ $limit: limit },

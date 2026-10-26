@@ -29,6 +29,10 @@ for (const handlerName of ['getUserProfileById', 'getPublicProfileByUserId']) {
         bio: 'Fixture bio', profilePictureUrl: 'fixture-photo',
         followers: [viewerId], following: [visibleTripId, hiddenTripId],
         settings: { defaultTripVisibility: 'private' }, createdAt: new Date('2026-01-01T00:00:00Z'),
+        password: 'synthetic-private-value', email: 'private@example.com',
+        passwordResetToken: 'synthetic-reset', passwordResetExpires: new Date(),
+        emailVerificationToken: 'synthetic-verification', emailVerificationExpires: new Date(),
+        futurePrivateField: 'not-part-of-any-public-contract',
       };
       const viewer = role === 'anonymous' ? null : { _id: role === 'owner' ? ownerId : role === 'stranger' ? strangerId : viewerId };
       let expectedFilter;
@@ -75,6 +79,13 @@ for (const handlerName of ['getUserProfileById', 'getPublicProfileByUserId']) {
         assert.equal(result.body[key], value, `${key} preserves the mobile response contract`);
       }
       assert.equal(Object.hasOwn(result.body, 'settings'), handlerName === 'getUserProfileById' && role === 'owner');
+      const publicFields = ['_id', 'username', 'bio', 'city', 'country', 'profilePictureUrl', 'createdAt',
+        'totalTrips', 'totalDistance', 'followersCount', 'followingCount', 'totalRecommendations', 'totalPois'];
+      const extraFields = handlerName === 'getPublicProfileByUserId' ? ['isFollowing', 'isOwnProfile'] : role === 'owner' ? ['settings'] : [];
+      assert.deepEqual(Object.keys(result.body).sort(), [...publicFields, ...extraFields].sort());
+      for (const key of ['_id', 'username', 'bio', 'city', 'country', 'profilePictureUrl', 'createdAt']) {
+        assert.equal(result.body[key], user[key], `${key} preserves the rich profile header`);
+      }
       if (handlerName === 'getPublicProfileByUserId') {
         // Relationship state is derived from the same array as its count.
         assert.equal(result.body.isFollowing, role === 'follower');
@@ -152,7 +163,7 @@ for (const [handlerName, field] of [['getUserFollowers', 'followers'], ['getUser
           async populate(options) {
             populateCalls++;
             assert.equal(options.path, field);
-            assert.match(options.select, /followers/);
+            assert.equal(options.select, '_id username profilePictureUrl followers');
             assert.deepEqual(options.options, { sort: { username: 1 }, skip: 15, limit: 15 });
             return { [field]: page };
           },
