@@ -35,6 +35,10 @@ function fixture(options = {}) {
       exists: async f => children.some(c => c.photos.includes(f.photos)),
       deleteMany: async f => { assert.equal(f.user, owner); assert.equal(f.associatedTrip, id); children = children.filter(c => !f._id.$in.includes(c._id)); } },
     User: { exists: async f => { assert.ok(Object.hasOwn(f, 'profilePictureUrl')); return !!options.avatar; } },
+    ...(options.placeReceipts ? { RecommendationDeletion: {
+      find: filter => query(options.placeReceipts.filter(row => row.user === filter.user && row.associatedTrip === filter.associatedTrip)),
+      updateMany: async (filter, update, options) => { assert.equal(filter.user, owner); assert.equal(filter.associatedTrip, id); assert(options.session); calls.push('place-receipt-fence'); },
+    } } : {}),
     Receipt, connection: { startSession: async () => session },
     storage: { deleteFile: async file => { assert.equal(trip, null); if (failed === file) throw new Error('storage unavailable'); removed.push(file); } },
     findFile: async file => options.missing ? null : { metadata: options.unknownOwner ? {} : { userId: options.foreignOwner && file === photo ? other : owner } },
@@ -136,4 +140,17 @@ assert.equal((await service.deleteTrip(trip,user)).cleanupPending,true);
 chunks=false;
 assert.equal((await service.deleteTrip(trip,user)).cleanupPending,false);
 assert.deepEqual(receipt.pendingFiles,[]); assert.equal(receipt.phase,'complete');
+});
+
+test('permanent deletion includes prior owned place cleanup and fences receipt writes', async () => {
+ const owned='8'.repeat(24),foreign='9'.repeat(24);
+ const placeReceipts=[{_id:'place',user:owner,associatedTrip:id,pendingFiles:[owned]}, {_id:'foreign',user:other,associatedTrip:id,pendingFiles:[foreign]}];
+ const f=fixture({placeReceipts}); await f.service.deleteTrip(id,owner);
+ assert(f.calls.includes('place-receipt-fence')); assert(f.removed.includes(owned)); assert(!f.removed.includes(foreign));
+});
+test('parent owner retry recovers late place IDs even if forwarding was interrupted', async () => {
+ const placeReceipts=[]; const f=fixture({placeReceipts}); await f.service.deleteTrip(id,owner);
+ const late='8'.repeat(24); placeReceipts.push({_id:'place',user:owner,associatedTrip:id,pendingFiles:[late]});
+ const result=await f.service.deleteTrip(id,owner); assert.equal(result.cleanupPending,false);
+ assert(f.removed.includes(late)); assert.deepEqual(f.receipt.pendingFiles,[]);
 });

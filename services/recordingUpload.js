@@ -2,7 +2,7 @@ const { httpError } = require('./uploadIdempotency');
 
 // A real parent write serializes child inserts with durable completion and the
 // permanent-delete transaction across processes. A read-only recheck is not a fence.
-function createRecordingUploadService({ Trip, Recommendation, connection }) {
+function createRecordingUploadService({ Trip, Recommendation, Deletion, connection }) {
   async function assertSupported() {
     const hello = await connection.db.admin().command({ hello: 1 });
     if (!hello.setName && hello.msg !== 'isdbgrid') {
@@ -27,6 +27,13 @@ function createRecordingUploadService({ Trip, Recommendation, connection }) {
           { $inc: { uploadWriteVersion: 1 } }, { session });
         if (fenced.matchedCount !== 1) throw httpError(409, 'Recording changed; retry the same saved upload');
         const identity = { user: data.user, associatedTrip: data.associatedTrip, clientUploadId: data.clientUploadId };
+        const deleted = Deletion && await Deletion.findOne(identity).session(session);
+        if (deleted) {
+          // Creation happened historically; replay that identity without undoing
+          // the owner's subsequent deletion, including during a partial upload.
+          result = { outcome: { id: deleted._id, uploadId: data.clientUploadId, name: data.name, status: 'created' } };
+          return;
+        }
         let record = await Recommendation.findOne(identity).session(session);
         if (!record) [record] = await Recommendation.create([data], { session });
         result = { record };
@@ -50,7 +57,7 @@ function createRecordingUploadService({ Trip, Recommendation, connection }) {
 }
 let service;
 function defaults() {
-  return service ||= createRecordingUploadService({ Trip: require('../models/Trip'), Recommendation: require('../models/Recommendation'), connection: require('mongoose').connection });
+  return service ||= createRecordingUploadService({ Trip: require('../models/Trip'), Recommendation: require('../models/Recommendation'), Deletion: require('../models/RecommendationDeletion'), connection: require('mongoose').connection });
 }
 module.exports = { createRecordingUploadService };
 for (const name of ['assertSupported', 'createChild', 'finish']) module.exports[name] = (...args) => defaults()[name](...args);

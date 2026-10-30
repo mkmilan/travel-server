@@ -3,39 +3,21 @@ const same = (a, b) => String(a) === String(b);
 const unique = values => [...new Set(values.filter(Boolean).map(String))];
 
 // Dependencies are injectable so failure/retry tests never need a database.
-function createTripDeletionService({ Trip, Recommendation, User, Receipt, connection, storage, findFile, hasChunks, isValidId }) {
+function createTripDeletionService({ Trip, Recommendation, User, Receipt, RecommendationDeletion, connection, storage, findFile, hasChunks, isValidId }) {
+  const cleanupManifest = require('./fileCleanup').createManifestCleanup({ Trip, Recommendation, User, storage, findFile, hasChunks, isValidId });
   async function cleanup(receipt) {
-    const owner = receipt.user;
-    for (const fileId of receipt.pendingFiles || []) {
-      try {
-        // Explicit references can reuse an ID; identical uploaded bytes do not.
-        // Preserve actual surviving references, including foreign recommendations.
-        const referenced = await Trip.exists({ $or: [{ photos: fileId }, { gpxFileRef: fileId }] })
-          || await Recommendation.exists({ photos: fileId })
-          || await User.exists({ profilePictureUrl: fileId });
-        if (!referenced && isValidId(fileId)) {
-          const file = await findFile(fileId);
-          // A missing file document is not proof that its chunks are gone.
-          // Without uploader metadata we cannot safely remove ambiguous chunks.
-          if (!file && await hasChunks(fileId)) throw error(503, 'Exact file chunks remain; storage review is required.');
-          // Legacy/malformed/foreign ownership is deliberately not deletion authority.
-          if (file && same(file.metadata?.userId, owner)) {
-            await storage.deleteFile(fileId, owner);
-            // An overlapping retry can see missing metadata and resolve while
-            // another delete failed to remove chunks. Keep the exact ID pending.
-            if (await hasChunks(fileId)) throw error(503, 'Exact file chunks remain; storage review is required.');
-          }
-        }
-        // Retained shared/foreign files are not failed cleanup: they remain in use
-        // or are outside this owner's deletion authority.
-        await Receipt.updateOne({ _id: receipt._id, user: owner }, { $pull: { pendingFiles: fileId } });
-      } catch (_) {
-        // The durable ID remains pending. A caller can retry this same endpoint.
+    if (RecommendationDeletion) {
+      // Repair an interrupted/ambiguous late-ID forward on every owner retry,
+      // not only on the initial metadata transaction.
+      const places = await RecommendationDeletion.find({ associatedTrip: receipt._id, user: receipt.user }).lean();
+      const pending = unique(places.flatMap(row => row.pendingFiles || []));
+      if (pending.length) {
+        await Receipt.updateOne({ _id: receipt._id, user: receipt.user },
+          { $addToSet: { pendingFiles: { $each: pending } }, $set: { phase: 'records-deleted' } });
+        receipt = await Receipt.findOne({ _id: receipt._id, user: receipt.user }).lean();
       }
     }
-    await Receipt.updateOne({ _id: receipt._id, user: owner, pendingFiles: { $size: 0 } }, { $set: { phase: 'complete' } });
-    const current = await Receipt.findOne({ _id: receipt._id, user: owner }).lean();
-    if (!current) throw error(503, 'Deletion receipt is unavailable; retry to check cleanup.');
+    const current = await cleanupManifest(receipt, Receipt);
     return { tripId: String(receipt._id), deleted: true, cleanupPending: current.pendingFiles.length > 0 };
   }
 
@@ -61,7 +43,14 @@ function createTripDeletionService({ Trip, Recommendation, User, Receipt, connec
         if (trip.format !== 'json') throw error(409, 'Permanent mobile deletion currently supports JSON trips only.');
         if (trip.clientUploadId && trip.uploadComplete !== true) throw error(409, 'Finish the recording upload before deleting this trip.');
         const children = await Recommendation.find({ associatedTrip: tripId, user: userId }).session(session).lean();
-        const pendingFiles = unique([...(trip.photos || []), ...children.flatMap(rec => rec.photos || [])]);
+        const priorDeletions = RecommendationDeletion
+          ? await RecommendationDeletion.find({ associatedTrip: tripId, user: userId }).session(session).lean() : [];
+        const pendingFiles = unique([...(trip.photos || []), ...children.flatMap(rec => rec.photos || []), ...priorDeletions.flatMap(row => row.pendingFiles || [])]);
+        // A late-file writer touches these same receipts before checking the trip
+        // receipt, so its IDs either enter this snapshot or are forwarded afterward.
+        if (priorDeletions.length) await RecommendationDeletion.updateMany(
+          { _id: { $in: priorDeletions.map(row => row._id) }, user: userId, associatedTrip: tripId },
+          { $inc: { cleanupVersion: 1 } }, { session });
         [receipt] = await Receipt.create([{
           _id: trip._id, user: userId, ...(trip.clientUploadId ? { uploadId: trip.clientUploadId } : {}),
           pendingFiles, phase: 'records-deleted',
@@ -91,7 +80,7 @@ function defaultService() {
     const mongoose = require('mongoose');
     service = createTripDeletionService({
       Trip: require('../models/Trip'), Recommendation: require('../models/Recommendation'), User: require('../models/User'),
-      Receipt: require('../models/MobileTripDeletion'), connection: mongoose.connection,
+      Receipt: require('../models/MobileTripDeletion'), RecommendationDeletion: require('../models/RecommendationDeletion'), connection: mongoose.connection,
       storage: require('./storageService'), isValidId: mongoose.isObjectIdOrHexString,
       findFile: id => mongoose.connection.db.collection('gpxUploads.files').findOne({ _id: new mongoose.Types.ObjectId(id) }),
       hasChunks: async id => !!await mongoose.connection.db.collection('gpxUploads.chunks').findOne({ files_id: new mongoose.Types.ObjectId(id) }, { projection: { _id: 1 } }),

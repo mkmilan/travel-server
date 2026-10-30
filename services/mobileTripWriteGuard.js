@@ -2,7 +2,7 @@
 // write fence: legacy clients and process death can still race a metadata delete.
 const { httpError } = require('./uploadIdempotency');
 
-function createTripWriteGuard({ Trip, Recommendation, User, Deletion, isValidId, deleteFile, addPendingFiles }) {
+function createTripWriteGuard({ Trip, Recommendation, User, Deletion, isValidId, deleteFile, addPendingFiles, addRecommendationPendingFiles }) {
   async function assertWritableTrip(tripId, userId) {
     if (!tripId) return;
     if (!isValidId(tripId)) throw httpError(400, 'Invalid associated trip ID');
@@ -46,7 +46,7 @@ function createTripWriteGuard({ Trip, Recommendation, User, Deletion, isValidId,
       throw error;
     }
   }
-  async function cleanupUnattachedPhotos(tripId, userId, ids, { ignoreTripId, ignoreRecommendationId } = {}) {
+  async function cleanupUnattachedPhotos(tripId, userId, ids, { ignoreTripId, ignoreRecommendationId, recommendationId } = {}) {
     if (!ids.length) return;
     // Persist known late IDs before attempting any file deletion. The owner can
     // retry the same permanent-delete endpoint, including after a lost response.
@@ -54,6 +54,8 @@ function createTripWriteGuard({ Trip, Recommendation, User, Deletion, isValidId,
       await addPendingFiles(tripId, userId, ids);
       return;
     }
+    if (recommendationId && addRecommendationPendingFiles
+      && await addRecommendationPendingFiles(recommendationId, userId, ids)) return;
     // No deletion manifest means this was a normal upload failure, not a trip
     // deletion. Preserve any successfully attached IDs after ambiguous writes.
     for (const id of ids) {
@@ -72,9 +74,9 @@ function createTripWriteGuard({ Trip, Recommendation, User, Deletion, isValidId,
       if (result.matchedCount !== 1) throw httpError(410, 'Photo upload target no longer exists or changed');
       await assertWritableTrip(tripId, userId);
     } catch (error) {
-      try { await cleanupUnattachedPhotos(tripId, userId, ids); }
+      try { await cleanupUnattachedPhotos(tripId, userId, ids, recommendation ? { recommendationId: targetId } : {}); }
       catch (cleanupError) {
-        throw httpError(503, 'Photo upload did not complete; file cleanup could not be confirmed. Retry trip deletion if this trip was deleted.');
+        throw httpError(503, 'Photo upload did not complete; file cleanup could not be confirmed. Retry deletion of the same place or trip if it was deleted.');
       }
       throw error;
     }
@@ -89,6 +91,7 @@ function guard() {
     Deletion: require('../models/MobileTripDeletion'), isValidId: require('mongoose').isObjectIdOrHexString,
     deleteFile: require('./storageService').deleteFile,
     addPendingFiles: (...args) => require('./mobileTripDeletion').addPendingFiles(...args),
+    addRecommendationPendingFiles: (...args) => require('./recommendationDeletion').addPendingFiles(...args),
   });
   return defaults;
 }

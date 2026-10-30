@@ -63,3 +63,11 @@ owner-only deletion, retained unrelated data and cleanup retries with controlled
 accounts, then perform Android UI and interrupted-network acceptance checks.
 Disposable single-node integration tests do not establish production failover,
 process-kill safety, native UI behavior or universal cross-client crash atomicity.
+
+## App place-deletion coordination (2026-10-29)
+
+Whole v2 recommendation deletion now commits an exact-file cleanup receipt with
+its metadata deletion. Permanent trip deletion captures those pending owned place
+receipts, fences late writers, and reconciles them on owner retry. Recording child
+creation/completion also uses parent-fenced metadata transactions. See
+[app integrity contracts and rollout limits](docs/app-data-integrity-2026-10-29.md).

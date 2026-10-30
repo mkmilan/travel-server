@@ -30,3 +30,12 @@ Simultaneous same-owner requests; lost response followed by retry; restart after
 - Disposable official MongoDB 7.0.28 integration passed: actual unique partial indexes, 12 simultaneous same-owner requests producing one trip/child, response-loss replay, owner isolation, payload conflict, missing-index refusal, partial-child retry and preinsert rejection. No Atlas/live database was accessed. MongoDB 8.0.16 could not start in this container (CPU-discovery allocator failure); this is not a MongoDB 8 compatibility claim.
 - No deployment, live index creation or APK build performed. Native phone lifecycle/network acceptance remains a release gate.
 - Rolling back the server leaves legacy `/json` behavior available, but new reliable-upload clients will keep recordings pending and require the updated server; do not add an unsafe fallback. Additive columns/fields/indexes need not be removed for rollback.
+
+## Deleted children during partial upload
+
+Place deletion now retains a minimal original child ID/upload-key receipt and
+writes the owned parent's transaction fence. Frozen retries acknowledge that
+historical creation without recreating deleted content, while other missing
+children still retry. No new application index is required. See
+[app integrity contracts](docs/app-data-integrity-2026-10-29.md) for storage retry,
+transaction-topology, and current app cleanup-discovery limits.
