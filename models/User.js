@@ -1,6 +1,7 @@
 // server/models/User.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
+const isEmail = require("validator/lib/isEmail");
 
 const userSchema = new mongoose.Schema(
 	{
@@ -17,11 +18,7 @@ const userSchema = new mongoose.Schema(
 			unique: true,
 			lowercase: true, // Converts email to lowercase
 			trim: true,
-			match: [
-				// Basic email format validation
-				/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
-				"Please fill a valid email address",
-			],
+			validate: { validator: isEmail, message: "Please fill a valid email address" },
 		},
 		password: {
 			type: String,
