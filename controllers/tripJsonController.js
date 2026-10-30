@@ -7,6 +7,7 @@ const { processPendingRecommendations } = require("./recommendationJsonControlle
 const { json } = require("express");
 const { assertRecordingNotDeleted } = require("../services/mobileTripWriteGuard");
 const recordingUploads = require("../services/recordingUpload");
+const { tripForDisplay } = require("../services/tripResponse");
 const { fingerprint, validKey, httpError, requireUploadIndexes } = require("../services/uploadIdempotency");
 
 exports.createRecordingUpload = (req, res, next) => {
@@ -224,7 +225,7 @@ exports.getTripJsonById = async (req, res, next) => {
 				.lean(); // Use .lean() for recommendations as well
 
 			// Add recommendations to the trip object
-			const tripWithRecommendations = { ...trip, recommendations };
+			const tripWithRecommendations = { ...tripForDisplay(trip), recommendations };
 
 			return res.status(200).json(tripWithRecommendations);
 		}

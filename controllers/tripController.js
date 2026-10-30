@@ -10,6 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const { removePhoto } = require("../services/photoRemoval");
+const { tripForDisplay } = require("../services/tripResponse");
 const { assertWritableTrip, cleanupUnattachedPhotos, appendUploadedPhotos } = require("../services/mobileTripWriteGuard");
 /**
  * @desc    Create a new trip
@@ -250,12 +251,12 @@ const getTripById = async (req, res, next) => {
 
 		// First check: Is the requesting user the owner?
 		if (requestingUser._id.toString() === trip.user._id.toString()) {
-			return res.status(200).json(trip);
+			return res.status(200).json(tripForDisplay(trip));
 		}
 
 		// If not owner, check visibility
 		if (trip.defaultTripVisibility === "public") {
-			return res.status(200).json(trip);
+			return res.status(200).json(tripForDisplay(trip));
 		}
 
 		if (trip.defaultTripVisibility === "followers_only") {
@@ -268,7 +269,7 @@ const getTripById = async (req, res, next) => {
 				);
 
 			if (isFollower) {
-				return res.status(200).json(trip);
+				return res.status(200).json(tripForDisplay(trip));
 			}
 		}
 
