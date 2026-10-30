@@ -5,7 +5,7 @@ const owner = 'a'.repeat(24), foreign = 'b'.repeat(24), tripId = 'c'.repeat(24),
 function fixture() {
   let trip = { _id: tripId, user: owner, photos: [] }, receipt = null, updateFailure = null;
   const pending = [], removed = [], writes = [], children = [];
-  const match = (row, query) => row && Object.entries(query).every(([key, value]) => value?.$in ? value.$in.map(String).includes(String(row[key])) : key === 'photos' ? row.photos?.includes(value) : String(row[key]) === String(value));
+  const match = (row, query) => row && Object.entries(query).every(([key, value]) => key === '$or' ? value.some(condition => match(row, condition)) : value?.$in ? value.$in.map(String).includes(String(row[key])) : key === 'photos' ? row.photos?.includes(value) : String(row[key]) === String(value));
   const Trip = {
     findOne: async query => match(trip, query) ? trip : null,
     exists: async query => !!match(trip, query),

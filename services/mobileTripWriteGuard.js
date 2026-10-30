@@ -2,7 +2,7 @@
 // write fence: legacy clients and process death can still race a metadata delete.
 const { httpError } = require('./uploadIdempotency');
 
-function createTripWriteGuard({ Trip, Recommendation, Deletion, isValidId, deleteFile, addPendingFiles }) {
+function createTripWriteGuard({ Trip, Recommendation, User, Deletion, isValidId, deleteFile, addPendingFiles }) {
   async function assertWritableTrip(tripId, userId) {
     if (!tripId) return;
     if (!isValidId(tripId)) throw httpError(400, 'Invalid associated trip ID');
@@ -46,7 +46,7 @@ function createTripWriteGuard({ Trip, Recommendation, Deletion, isValidId, delet
       throw error;
     }
   }
-  async function cleanupUnattachedPhotos(tripId, userId, ids) {
+  async function cleanupUnattachedPhotos(tripId, userId, ids, { ignoreTripId, ignoreRecommendationId } = {}) {
     if (!ids.length) return;
     // Persist known late IDs before attempting any file deletion. The owner can
     // retry the same permanent-delete endpoint, including after a lost response.
@@ -57,7 +57,8 @@ function createTripWriteGuard({ Trip, Recommendation, Deletion, isValidId, delet
     // No deletion manifest means this was a normal upload failure, not a trip
     // deletion. Preserve any successfully attached IDs after ambiguous writes.
     for (const id of ids) {
-      if (await Trip.exists({ photos: id }) || await Recommendation.exists({ photos: id })) continue;
+      if (await Trip.exists({ $or: [{ photos: id, ...(ignoreTripId ? { _id: { $ne: ignoreTripId } } : {}) }, { gpxFileRef: id }] })
+        || await Recommendation.exists({ photos: id, ...(ignoreRecommendationId ? { _id: { $ne: ignoreRecommendationId } } : {}) }) || (User && await User.exists({ profilePictureUrl: id }))) continue;
       await deleteFile(id, userId);
     }
   }
@@ -84,7 +85,7 @@ function createTripWriteGuard({ Trip, Recommendation, Deletion, isValidId, delet
 let defaults;
 function guard() {
   if (!defaults) defaults = createTripWriteGuard({
-    Trip: require('../models/Trip'), Recommendation: require('../models/Recommendation'),
+    Trip: require('../models/Trip'), Recommendation: require('../models/Recommendation'), User: require('../models/User'),
     Deletion: require('../models/MobileTripDeletion'), isValidId: require('mongoose').isObjectIdOrHexString,
     deleteFile: require('./storageService').deleteFile,
     addPendingFiles: (...args) => require('./mobileTripDeletion').addPendingFiles(...args),

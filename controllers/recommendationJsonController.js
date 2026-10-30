@@ -1,3 +1,4 @@
+const { removePhoto } = require("../services/photoRemoval");
 const { assertOwnedPhotos } = require("../services/fileOwnership");
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
@@ -659,7 +660,7 @@ const deleteRecommendationPhoto = async (req, res, next) => {
 
 	try {
 		// Find the recommendation
-		const recommendation = await Recommendation.findById(recommendationId).select("user photos");
+		const recommendation = await Recommendation.findById(recommendationId).select("user photos associatedTrip");
 
 		if (!recommendation) {
 			return res.status(404).json({ message: "Recommendation not found" });
@@ -676,23 +677,15 @@ const deleteRecommendationPhoto = async (req, res, next) => {
 			return res.status(404).json({ message: "Photo not found in this recommendation" });
 		}
 
-		// Delete the file from storage (GridFS)
-		try {
-			await storageService.deleteFile(photoId, userId);
-			console.log(`Deleted photo file ${photoId} from storage`);
-		} catch (storageError) {
-			console.warn(`Failed to delete photo file ${photoId} from storage:`, storageError.message);
-			// Continue with database cleanup even if storage deletion fails
-		}
-
-		// Remove the photo ID from the recommendation's photos array
-		recommendation.photos = recommendation.photos.filter((id) => id.toString() !== photoId);
-		await recommendation.save();
+		const photosCount = await removePhoto({
+			model: Recommendation, targetId: recommendationId, userId, photoId,
+			cleanup: () => cleanupUnattachedPhotos(recommendation.associatedTrip, userId, [photoId], { ignoreRecommendationId: recommendationId }),
+		});
 
 		console.log(`Removed photo ${photoId} from recommendation ${recommendationId}`);
 		res.status(200).json({
 			message: "Photo deleted successfully",
-			photosCount: recommendation.photos.length,
+			photosCount,
 		});
 	} catch (error) {
 		console.error(`Error deleting photo ${photoId} from recommendation ${recommendationId}:`, error);

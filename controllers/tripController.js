@@ -9,6 +9,7 @@ const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
+const { removePhoto } = require("../services/photoRemoval");
 const { assertWritableTrip, cleanupUnattachedPhotos, appendUploadedPhotos } = require("../services/mobileTripWriteGuard");
 /**
  * @desc    Create a new trip
@@ -1143,25 +1144,10 @@ const deleteTripPhoto = async (req, res, next) => {
 			return next(new Error(`Photo ${photoId} not found in trip`));
 		}
 
-		// Try to delete the file from GridFS first
-		try {
-			await storageService.deleteFile(photoIdString, userId);
-			console.log(`Successfully deleted photo file ${photoId} from storage`);
-		} catch (storageError) {
-			console.error(
-				`Failed to delete photo file ${photoId} from storage:`,
-				storageError
-			);
-			// If the file doesn't exist in storage, we still want to remove the reference
-			if (!storageError.message.includes("not found")) {
-				throw storageError; // Re-throw if it's not a "not found" error
-			}
-		}
-
-		// Remove the photo reference from the trip
-		trip.photos = trip.photos.filter((id) => id.toString() !== photoIdString);
-		await trip.save();
-		console.log(`Removed photo reference ${photoId} from trip ${tripId}`);
+		await removePhoto({
+			model: Trip, targetId: tripId, userId, photoId: photoIdString,
+			cleanup: () => cleanupUnattachedPhotos(tripId, userId, [photoIdString], { ignoreTripId: tripId }),
+		});
 
 		res.status(200).json({
 			message: "Photo deleted successfully",
