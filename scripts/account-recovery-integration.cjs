@@ -53,7 +53,11 @@ async function main() {
   const attempts=await Promise.all([call('/auth/login','POST',{email,password}),call('/auth/login','POST',{email,password})]);
   assert(attempts.every(r=>r.status===403));assert.equal(deliveries.length,2);
   assert.equal((await call('/auth/verifyemail/'+firstToken)).status,400);
-  const currentToken=deliveries[1].text.split('/').pop();assert.equal((await call('/auth/verifyemail/'+currentToken)).status,200);
+  // The timestamp path (not just missing legacy fields) permits retry after cooldown.
+  await User.updateOne({_id:user._id},{$set:{emailVerificationLastSentAt:new Date(Date.now()-61000)}});
+  assert.equal((await call('/auth/login','POST',{email,password})).status,403);assert.equal(deliveries.length,3);
+  assert.equal((await call('/auth/verifyemail/'+deliveries[1].text.split('/').pop())).status,400);
+  const currentToken=deliveries[2].text.split('/').pop();assert.equal((await call('/auth/verifyemail/'+currentToken)).status,200);
   assert.equal((await call('/auth/verifyemail/'+currentToken)).status,400);
   // Simulate an emailed reset token, never send real mail.
   const resetToken='synthetic-reset-token';
@@ -73,11 +77,19 @@ async function main() {
   const login=await call('/auth/login','POST',{email,password:'new-fixture-password'});assert.equal(login.status,200);assert(jwt.decode(login.body.token).sessionVersion);
   assert.equal((await call('/auth/me','GET',null,login.body.token)).status,200);
   assert.equal((await call('/optional','GET',null,login.body.token)).body.id,String(user._id));
-  const profileResponse=await fetch(base+'/users/me',{method:'PUT',headers:{'Content-Type':'application/json',Cookie:`token=${login.body.token}`},body:JSON.stringify({bio:'Synthetic profile update'})});
+  const profileResponse=await fetch(base+'/users/me',{method:'PUT',headers:{'Content-Type':'application/json',Cookie:`token=${login.body.token}`,Authorization:`Bearer ${legacyToken}`},body:JSON.stringify({bio:'Synthetic profile update'})});
   assert.equal(profileResponse.status,200); const profile=await profileResponse.json();
   assert.equal(profile.token,login.body.token); assert.equal(profile.sessionVersion,undefined);
   assert.equal((await call('/auth/me','GET',null,profile.token)).status,200);
   user=await User.findById(user._id).select('+password +sessionVersion +passwordResetToken');assert(await user.matchPassword('new-fixture-password'));assert.equal(user.passwordResetToken,undefined);
+  // A second reset also revokes already-versioned sessions, not only legacy JWTs.
+  await User.updateOne({_id:user._id},{$set:{passwordResetToken:crypto.createHash('sha256').update('second-reset-token').digest('hex'),passwordResetExpires:new Date(Date.now()+60000)}});
+  assert.equal((await call('/auth/resetpassword/second-reset-token','PUT',{password:'second-fixture-password'})).status,200);
+  assert.equal((await call('/auth/me','GET',null,login.body.token)).status,401);
+  assert.equal((await call('/optional','GET',null,login.body.token)).body.id,null);
+  const secondLogin=await call('/auth/login','POST',{email,password:'second-fixture-password'});
+  assert.equal(secondLogin.status,200);assert.notEqual(jwt.decode(secondLogin.body.token).sessionVersion,jwt.decode(login.body.token).sessionVersion);
+  assert.equal((await call('/auth/me','GET',null,secondLogin.body.token)).status,200);
   console.log('PASS: SMTP-failure recovery, retained delivery token, credential gate, atomic resend cooldown, legacy sessions, single-use verification, concurrent reset/replay, password hashing and required/optional session revocation');
  } finally {
   if(server)await new Promise(r=>server.close(r));
