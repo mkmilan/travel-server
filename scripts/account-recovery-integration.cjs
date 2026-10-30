@@ -58,6 +58,12 @@ async function main() {
   // Simulate an emailed reset token, never send real mail.
   const resetToken='synthetic-reset-token';
   await User.updateOne({_id:user._id},{$set:{passwordResetToken:crypto.createHash('sha256').update(resetToken).digest('hex'),passwordResetExpires:new Date(Date.now()+60000)}});
+  assert.equal((await call('/auth/resetpassword/'+resetToken,'PUT',{password:'short'})).status,400);
+  assert.equal((await call('/auth/resetpassword/not-the-token','PUT',{password:'new-fixture-password'})).status,400);
+  await User.updateOne({_id:user._id},{$set:{passwordResetExpires:new Date(Date.now()-1000)}});
+  assert.equal((await call('/auth/resetpassword/'+resetToken,'PUT',{password:'new-fixture-password'})).status,400);
+  assert.equal((await call('/auth/me','GET',null,legacyToken)).status,200);
+  await User.updateOne({_id:user._id},{$set:{passwordResetExpires:new Date(Date.now()+60000)}});
   const resets=await Promise.all([call('/auth/resetpassword/'+resetToken,'PUT',{password:'new-fixture-password'}),call('/auth/resetpassword/'+resetToken,'PUT',{password:'new-fixture-password'})]);
   assert.deepEqual(resets.map(r=>r.status).sort(),[200,400]);
   assert.equal((await call('/auth/resetpassword/'+resetToken,'PUT',{password:'another-password'})).status,400);
