@@ -30,6 +30,7 @@ const userSchema = new mongoose.Schema(
 			type: Boolean,
 			default: false,
 		},
+		emailVerificationLastSentAt: { type: Date, select: false },
 		emailVerificationToken: {
 			type: String,
 			select: false,
@@ -38,6 +39,7 @@ const userSchema = new mongoose.Schema(
 			type: Date,
 			select: false,
 		},
+		sessionVersion: { type: String, select: false },
 		passwordResetToken: {
 			type: String,
 			select: false,

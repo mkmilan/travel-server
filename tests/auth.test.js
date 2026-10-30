@@ -5,7 +5,8 @@ const jwt = require('jsonwebtoken');
 const userPath = require.resolve('../models/User');
 const prior = require.cache[userPath];
 const id = 'a'.repeat(24);
-require.cache[userPath] = { id: userPath, filename: userPath, loaded: true, exports: { findById(value) { return { select: async () => value === id ? { _id: id } : null }; } } };
+let sessionVersion;
+require.cache[userPath] = { id: userPath, filename: userPath, loaded: true, exports: { findById(value) { return { select: async () => value === id ? { _id: id, sessionVersion } : null }; } } };
 const { protect, protectOptional } = require('../middleware/authMiddleware');
 const priorSecret = process.env.JWT_SECRET;
 // Public, synthetic in-memory test fixture, never a development/production credential.
@@ -30,4 +31,18 @@ test('optional authentication keeps anonymous requests anonymous and honors bear
 });
 test('protected route without token fails rather than authorizing', async () => {
  const result = await call(protect, {}); assert.equal(result.status, 401); assert.ok(result.error);
+});
+
+test('reset session version revokes old cookie/bearer auth and optional identity', async () => {
+ const old = token();
+ sessionVersion = 'synthetic-version-after-reset';
+ try {
+  for (const request of [{cookies:{token:old}}, {headers:{authorization:`Bearer ${old}`}}]) {
+   assert.equal((await call(protect, request)).status, 401);
+   assert.equal((await call(protectOptional, request)).req.user, null);
+  }
+  const current = jwt.sign({id, sessionVersion}, process.env.JWT_SECRET, {expiresIn:'1m'});
+  assert.equal((await call(protect, {headers:{authorization:`Bearer ${current}`}})).status, 200);
+  assert.equal((await call(protectOptional, {cookies:{token:current}})).req.user._id, id);
+ } finally { sessionVersion = undefined; }
 });

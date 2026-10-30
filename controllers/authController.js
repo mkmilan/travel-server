@@ -3,6 +3,8 @@ const User = require("../models/User");
 const generateToken = require("../utils/generateToken");
 const sendEmail = require("../utils/sendEmail");
 const crypto = require("crypto");
+const bcrypt = require("bcrypt");
+const { sendVerificationEmail } = require("../services/emailVerification");
 const dotenv = require("dotenv");
 const { body } = require("express-validator");
 const { validate } = require("../middleware/validate");
@@ -10,7 +12,7 @@ dotenv.config();
 
 // Helper function to set the token cookie
 const sendTokenResponse = (user, statusCode, res) => {
-	const token = generateToken(user._id);
+	const token = generateToken(user._id, user.sessionVersion);
 
 	const cookieOptions = {
 		expires: new Date(
@@ -133,60 +135,15 @@ const registerUser = [
 				password,
 			});
 
-			const verificationToken = crypto.randomBytes(32).toString("hex");
-			user.emailVerificationToken = crypto
-				.createHash("sha256")
-				.update(verificationToken)
-				.digest("hex");
-			user.emailVerificationExpires =
-				Date.now() +
-				process.env.EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES * 60 * 1000; // Token expires in 24 hours
-
-			await user.save({ validateBeforeSave: false });
-
-			// Determine Client URL based on environment
-			const clientBaseUrl =
-				process.env.NODE_ENV === "production"
-					? process.env.PUBLIC_SITE_URL
-					: process.env.FRONTEND_URL;
-			// Construct verification URL (adjust CLIENT_URL as needed)
-			const verificationUrl = `${
-				clientBaseUrl || "http://localhost:3000"
-			}/verify-email/${verificationToken}`;
-			const message = `
-   <p>Please verify your email address by clicking the link below:</p>
-   <p><a href="${verificationUrl}">Verify Email</a></p>
-   <p>If you did not create an account, please ignore this email.</p>
- `;
-
 			try {
-				// console.log("Attempting to send verification email to:", user.email);
-				await sendEmail({
-					email: user.email,
-					subject: "Email Verification ",
-					html: message,
-					text: `Please verify your email address by copying and pasting this URL into your browser: ${verificationUrl}`,
-				});
-				console.log(
-					"Verification email 'sent' (logged in dev) to:",
-					user.email
-				);
+				await sendVerificationEmail(user);
 				res.status(201).json({
 					success: true,
-					message: `An email has been sent to ${user.email} with further instructions. Please verify your email to log in.`,
+					message: `An email has been sent to ${user.email}. Verify your email to log in. If it does not arrive, log in after one minute to send another link.`,
 				});
 			} catch (err) {
-				console.error("Error sending verification email:", err);
-				// Rollback user creation or mark user as unverified if email fails?
-				// For now, we'll clear the token fields so it can be resent or handled.
-				user.emailVerificationToken = undefined;
-				user.emailVerificationExpires = undefined;
-				await user.save({ validateBeforeSave: false });
-				return next(
-					new Error(
-						"Email could not be sent. Please try registering again later."
-					)
-				);
+				res.status(503);
+				return next(new Error("Your account was created, but the verification email could not be confirmed. Check your inbox, or log in after one minute to send another link."));
 			}
 		} catch (error) {
 			console.error(
@@ -219,21 +176,16 @@ const verifyEmail = async (req, res, next) => {
 	const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
 	try {
-		const user = await User.findOne({
+		const user = await User.findOneAndUpdate({
 			emailVerificationToken: hashedToken,
-			emailVerificationExpires: { $gt: Date.now() }, // Check if token is not expired
-		});
+			emailVerificationExpires: { $gt: Date.now() },
+		}, { $set: { isEmailVerified: true }, $unset: { emailVerificationToken: "", emailVerificationExpires: "" } }, { new: true }).select("+sessionVersion");
 
 		if (!user) {
 			res.status(400);
 			return next(new Error("Invalid or expired verification token."));
 		}
 
-		// Mark email as verified and clear token fields
-		user.isEmailVerified = true;
-		user.emailVerificationToken = undefined;
-		user.emailVerificationExpires = undefined;
-		await user.save({ validateBeforeSave: false });
 
 		// Log the user in by sending a token response
 		sendTokenResponse(user, 200, res);
@@ -369,25 +321,20 @@ const resetPassword = [
 		const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
 		try {
-			const user = await User.findOne({
+			// Hash before the conditional write, then consume the token once. Save
+			// hooks do not run for update queries, so hashing is explicit here.
+			const hashedPassword = await bcrypt.hash(password, 10);
+			const user = await User.findOneAndUpdate({
 				passwordResetToken: hashedToken,
-				passwordResetExpires: { $gt: Date.now() }, // Check if token is not expired
-			});
-
+				passwordResetExpires: { $gt: Date.now() },
+			}, {
+				$set: { password: hashedPassword, sessionVersion: crypto.randomUUID() },
+				$unset: { passwordResetToken: "", passwordResetExpires: "" },
+			}, { new: true, runValidators: true });
 			if (!user) {
 				res.status(400);
 				return next(new Error("Invalid or expired password reset token."));
 			}
-
-			// Set new password (pre-save hook in User model will hash it)
-			user.password = password;
-			// Clear reset token fields
-			user.passwordResetToken = undefined;
-			user.passwordResetExpires = undefined;
-			// Mark email as verified if it wasn't already (optional, but good if they reset via email)
-			// user.isEmailVerified = true;
-
-			await user.save(); // This will trigger the pre-save hook to hash the new password
 
 			// Optionally, log the user in by sending a token response
 			// sendTokenResponse(user, 200, res);
@@ -426,7 +373,7 @@ const loginUser = [
 
 		try {
 			const user = await User.findOne({ email }).select(
-				"+password +isEmailVerified"
+				"+password +isEmailVerified +sessionVersion"
 			); // Also select isEmailVerified
 
 			if (!user) {
@@ -434,24 +381,24 @@ const loginUser = [
 				return next(new Error("Invalid email or password"));
 			}
 
-			// Check if email is verified before allowing login
-			if (!user.isEmailVerified) {
-				// Optionally, you could resend the verification email here or prompt the user
-				// For now, just a generic message.
-				res.status(403); // Forbidden
-				return next(
-					new Error(
-						"Email not verified. Please check your email for a verification link."
-					)
-				);
-			}
-
-			if (await user.matchPassword(password)) {
-				sendTokenResponse(user, 200, res);
-			} else {
+			// Never reveal verification state or trigger email without the password.
+			if (!(await user.matchPassword(password))) {
 				res.status(401);
 				return next(new Error("Invalid email or password"));
 			}
+			if (!user.isEmailVerified) {
+				try {
+					const sent = await sendVerificationEmail(user);
+					res.status(403);
+					return next(new Error(sent
+						? "Email not verified. A new verification link has been sent. Check your inbox and spam folder, then log in."
+						: "Email not verified. Check your inbox and spam folder. You can log in again after one minute to send another link."));
+				} catch (error) {
+					res.status(503);
+					return next(new Error("The verification email could not be confirmed. Check your inbox, or log in again after one minute to retry."));
+				}
+			}
+			sendTokenResponse(user, 200, res);
 		} catch (error) {
 			// Log the error for debugging but don't expose details to client
 			console.error("Login error:", error);

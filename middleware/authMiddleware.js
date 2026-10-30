@@ -24,7 +24,7 @@ const protect = async (req, res, next) => {
 
 		// Verify token using the secret
 		const decoded = jwt.verify(token, process.env.JWT_SECRET);
-		req.user = await User.findById(decoded.id).select("-password");
+		req.user = await User.findById(decoded.id).select("-password +sessionVersion");
 
 		if (!req.user) {
 			// Handle case where token is valid but user doesn't exist anymore
@@ -32,6 +32,9 @@ const protect = async (req, res, next) => {
 			throw new Error("Not authorized, user not found");
 		}
 
+		if ((req.user.sessionVersion || null) !== (decoded.sessionVersion || null)) {
+			throw new Error("Session revoked");
+		}
 		// User is authenticated, proceed to the next middleware/route handler
 		next();
 	} catch (error) {
@@ -72,8 +75,8 @@ const protectOptional = async (req, res, next) => {
 			// token = req.headers.authorization.split(" ")[1];
 			const decoded = jwt.verify(token, process.env.JWT_SECRET);
 			// Attach user if token is valid, but don't throw error if user not found yet
-			req.user = await User.findById(decoded.id).select("-password");
-			// No need to check if !req.user here, as it's optional
+			req.user = await User.findById(decoded.id).select("-password +sessionVersion");
+			if (req.user && (req.user.sessionVersion || null) !== (decoded.sessionVersion || null)) req.user = null;
 		} catch (error) {
 			// Token is invalid or expired, but we don't block the request
 			console.warn(
