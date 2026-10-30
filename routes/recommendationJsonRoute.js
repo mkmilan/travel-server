@@ -28,6 +28,9 @@ router.put("/:recommendationId", protect, updateRecommendationJson); // Changed 
 router.delete("/:recommendationId", protect, deleteRecommendationJson);
 
 //  /api/v2/recommendations/:recommendationId/photos
+// Dedicated route fails closed on older servers rather than silently duplicating.
+router.post("/:recommendationId/photos/reliable", protect, uploadMultiplePhotos,
+	(req, res, next) => { req.reliablePhotoUpload = true; next(); }, uploadRecommendationPhotos);
 router.post("/:recommendationId/photos", protect, uploadMultiplePhotos, uploadRecommendationPhotos);
 router.delete("/:recommendationId/photos/:photoId", protect, deleteRecommendationPhoto);
 module.exports = router;

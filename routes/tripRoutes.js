@@ -39,6 +39,9 @@ router.put("/:tripId", protect, updateTrip);
 router.delete("/:tripId", protect, deleteTrip);
 router.post("/:tripId/pois", protect, addPoiToTrip);
 
+// Dedicated route fails closed on older servers rather than silently duplicating.
+router.post("/:tripId/photos/reliable", protect, uploadMultiplePhotos,
+	(req, res, next) => { req.reliablePhotoUpload = true; next(); }, uploadTripPhotos);
 router.post("/:tripId/photos", protect, uploadMultiplePhotos, uploadTripPhotos);
 router.delete("/:tripId/photos/:photoId", protect, deleteTripPhoto);
 

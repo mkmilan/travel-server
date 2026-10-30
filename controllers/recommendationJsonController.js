@@ -1,3 +1,4 @@
+const reliablePhotos = require('../services/photoUploadIdempotency');
 const recordingUploads = require("../services/recordingUpload");
 const { removePhoto } = require("../services/photoRemoval");
 const { assertOwnedPhotos } = require("../services/fileOwnership");
@@ -603,6 +604,13 @@ const uploadRecommendationPhotos = async (req, res, next) => {
 	/* --- process & store each file ------------------------------------- */
 	try {
 		await assertWritableTrip(recommendation.associatedTrip, userId);
+		if (req.reliablePhotoUpload) {
+			const key = reliablePhotos.readPhotoUploadKey(req);
+			if (!key) throw Object.assign(new Error('Photo upload identity is required'), { statusCode: 400 });
+			const result = await reliablePhotos.uploadPhoto({ kind: 'recommendation', targetId: recommendationId, userId, key, file: req.files[0] });
+			return res.status(200).json(result);
+		}
+
 		const outcomes = await Promise.allSettled(
 			req.files.map(async (file) => {
 				/* ▸  keep aspect ratio – resize only if necessary             */
@@ -683,6 +691,7 @@ const deleteRecommendationPhoto = async (req, res, next) => {
 			return res.status(404).json({ message: "Photo not found in this recommendation" });
 		}
 
+		await reliablePhotos.markPhotoRemoved({ kind: 'recommendation', targetId: recommendationId, userId, photoId });
 		const photosCount = await removePhoto({
 			model: Recommendation, targetId: recommendationId, userId, photoId,
 			cleanup: () => cleanupUnattachedPhotos(recommendation.associatedTrip, userId, [photoId], { ignoreRecommendationId: recommendationId }),

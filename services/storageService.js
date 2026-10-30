@@ -34,7 +34,7 @@ mongoose.connection.on("error", (err) => {
  * @param {object} [metadata={}] - Optional metadata to store with the file.
  * @returns {Promise<string>} - Promise resolving with the file ID (as a string).
  */
-const uploadFile = (fileBuffer, filename, contentType, metadata = {}) => {
+const uploadFile = (fileBuffer, filename, contentType, metadata = {}, reservedId) => {
 	return new Promise((resolve, reject) => {
 		if (!gfs) {
 			console.error("GridFSBucket not initialized during uploadFile.");
@@ -47,15 +47,18 @@ const uploadFile = (fileBuffer, filename, contentType, metadata = {}) => {
 		// readableStream.push(null);
 
 		console.log(`GridFS: Starting upload for filename: ${filename}`);
-		// const uploadStream = gfs.openUploadStream(filename, { metadata });
+		// Reserve an ID only for the reliable single-photo protocol.
 
-		const uploadStream = gfs.openUploadStream(filename, {
+		const uploadOptions = {
 			contentType: contentType, // <-- Store contentType
 			metadata: {
 				...metadata,
 				originalFilename: metadata.originalFilename || filename,
 			}, // Keep original name in metadata
-		});
+		};
+		const uploadStream = reservedId
+			? gfs.openUploadStreamWithId(new ObjectId(reservedId), filename, uploadOptions)
+			: gfs.openUploadStream(filename, uploadOptions);
 
 		uploadStream.once("finish", () => {
 			const fileId = uploadStream.id;

@@ -1,3 +1,4 @@
+const reliablePhotos = require('../services/photoUploadIdempotency');
 // server/controllers/tripController.js
 const gpxParse = require("gpx-parse");
 const turf = require("@turf/turf"); // For distance calculation and potentially simplification
@@ -983,6 +984,13 @@ const uploadTripPhotos = async (req, res, next) => {
 		}
 
 		await assertWritableTrip(tripId, userId);
+		if (req.reliablePhotoUpload) {
+			const key = reliablePhotos.readPhotoUploadKey(req);
+			if (!key) throw Object.assign(new Error('Photo upload identity is required'), { statusCode: 400 });
+			const result = await reliablePhotos.uploadPhoto({ kind: 'trip', targetId: tripId, userId, key, file: req.files[0] });
+			return res.status(200).json(result);
+		}
+
 
 		// Process and upload each file
 		const uploadPromises = req.files.map(async (file) => {
@@ -1145,6 +1153,7 @@ const deleteTripPhoto = async (req, res, next) => {
 			return next(new Error(`Photo ${photoId} not found in trip`));
 		}
 
+		await reliablePhotos.markPhotoRemoved({ kind: 'trip', targetId: tripId, userId, photoId });
 		await removePhoto({
 			model: Trip, targetId: tripId, userId, photoId: photoIdString,
 			cleanup: () => cleanupUnattachedPhotos(tripId, userId, [photoIdString], { ignoreTripId: tripId }),
