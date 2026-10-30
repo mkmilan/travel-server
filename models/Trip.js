@@ -64,6 +64,7 @@ const tripSchema = new mongoose.Schema(
 		clientUploadId: { type: String },
 		uploadFingerprint: { type: String },
 		uploadComplete: { type: Boolean },
+		uploadWriteVersion: { type: Number },
 		uploadReceipt: { type: mongoose.Schema.Types.Mixed },
 		format: {
 			type: String,

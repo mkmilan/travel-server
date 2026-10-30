@@ -1,3 +1,4 @@
+const recordingUploads = require("../services/recordingUpload");
 const { removePhoto } = require("../services/photoRemoval");
 const { assertOwnedPhotos } = require("../services/fileOwnership");
 const Recommendation = require("../models/Recommendation");
@@ -144,8 +145,13 @@ const processPendingRecommendations = async (pendingRecommendations, userId, tri
 
 			await assertWritableTrip(tripId, userId);
 			let savedRecommendation;
-			try { savedRecommendation = await Recommendation.create({ ...recommendationToSave, ...(identity || {}) }); }
-			catch (error) {
+			try {
+				if (identity) {
+					const result = await recordingUploads.createChild({ ...recommendationToSave, ...identity });
+					if (result.outcome) { createdRecommendationsInfo.push(result.outcome); continue; }
+					savedRecommendation = result.record;
+				} else savedRecommendation = await Recommendation.create(recommendationToSave);
+			} catch (error) {
 				if (!identity || error.code !== 11000) throw error;
 				savedRecommendation = await Recommendation.findOne(identity);
 				if (!savedRecommendation) throw error;

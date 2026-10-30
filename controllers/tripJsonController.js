@@ -6,6 +6,7 @@ const mongoose = require("mongoose");
 const { processPendingRecommendations } = require("./recommendationJsonController"); // Import the new function
 const { json } = require("express");
 const { assertRecordingNotDeleted } = require("../services/mobileTripWriteGuard");
+const recordingUploads = require("../services/recordingUpload");
 const { fingerprint, validKey, httpError, requireUploadIndexes } = require("../services/uploadIdempotency");
 
 exports.createRecordingUpload = (req, res, next) => {
@@ -26,6 +27,7 @@ exports.createTripJson = async (req, res, next) => {
 			if (!Array.isArray(children) || children.some(child => !validKey(child.uploadId))
 				|| new Set(children.map(child => child.uploadId)).size !== children.length) throw httpError(400, "Invalid recommendation upload identities");
 			await requireUploadIndexes(Trip, Recommendation);
+			await recordingUploads.assertSupported();
 			await assertRecordingNotDeleted(userId, req.body.uploadId);
 			uploadFingerprint = fingerprint(req.body);
 		}
@@ -151,10 +153,19 @@ exports.createTripJson = async (req, res, next) => {
 			);
 		}
 		if (reliable && savedTrip.uploadComplete) recommendationsOutcome = savedTrip.uploadReceipt || [];
-		const uploadComplete = recommendationsOutcome.length === pendingRecommendationsPayload.length
+		let uploadComplete = recommendationsOutcome.length === pendingRecommendationsPayload.length
 			&& recommendationsOutcome.every(outcome => outcome.status === "created");
-		if (reliable && uploadComplete && !savedTrip.uploadComplete) {
-			await Trip.updateOne({ _id: savedTrip._id, user: userId }, { $set: { uploadComplete: true, uploadReceipt: recommendationsOutcome } });
+		if (reliable) {
+			await assertRecordingNotDeleted(userId, req.body.uploadId, savedTrip);
+			let completed;
+			try { completed = await recordingUploads.finish(savedTrip._id, userId, recommendationsOutcome, pendingRecommendationsPayload.length); }
+			catch (error) {
+				// Permanent deletion can commit between completion and receipt lookup.
+				if (error.statusCode === 404) await assertRecordingNotDeleted(userId, req.body.uploadId, savedTrip);
+				throw error;
+			}
+			recommendationsOutcome = completed.outcomes;
+			uploadComplete = completed.uploadComplete;
 		}
 		// --- End Recommendation Processing ---
 

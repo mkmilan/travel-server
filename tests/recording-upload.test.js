@@ -6,6 +6,7 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { uploadIndexes } = require('../services/uploadIdempotency');
 const { createTripWriteGuard } = require('../services/mobileTripWriteGuard');
+const { createRecordingUploadService } = require('../services/recordingUpload');
 function load(file, stubs) {
  const filename = path.resolve(__dirname, '..', file), realRequire = createRequire(filename), module = { exports: {} };
  vm.runInNewContext(fs.readFileSync(filename, 'utf8'), { module, exports: module.exports, require: id => Object.hasOwn(stubs,id) ? stubs[id] : realRequire(id), console: {log(){},warn(){},error(){}}, process, Buffer }, {filename});
@@ -14,32 +15,36 @@ function load(file, stubs) {
 const owner = 'a'.repeat(24), other = 'b'.repeat(24);
 const payload = () => ({uploadProtocol:1,uploadId:'recording-1',title:'Synthetic',startTime:'2026-01-01T00:00:00Z',defaultTripVisibility:'private',defaultTravelMode:'walking',segments:[{track:[{lat:1,lon:1,t:'2026-01-01T00:00:00Z'},{lat:1,lon:1.01,t:'2026-01-01T00:01:00Z'}]}],recommendations:[{uploadId:'1',name:'Fixture',description:'Synthetic fixture',latitude:1,longitude:1,primaryCategory:'OTHER'}]});
 function fixture() {
- const trips=[],recs=[],receipts=[];let sequence=0,failChild=0,indexesPresent=true,deleteOnLookup=false;
+ const trips=[],recs=[],receipts=[];let sequence=0,failChild=0,indexesPresent=true,deleteOnLookup=false,lookupGate=null,deleteAtCompletion=false;
  const markDeleted=()=>{const trip=trips[0];receipts.push({_id:trip._id,user:trip.user,uploadId:trip.clientUploadId,pendingFiles:[]});trips.splice(0);recs.splice(0);};
- const matches=(row,query)=>Object.entries(query).every(([key,value])=>value?.$in ? value.$in.map(String).includes(String(row[key])) : String(row[key])===String(value));
+ const clone = row => row && JSON.parse(JSON.stringify(row));
+ const query = fn => ({ session(){return this}, then(ok,bad){return Promise.resolve().then(fn).then(ok,bad)} });
+ const matches=(row,filter)=>Object.entries(filter).every(([key,value])=>value?.$ne !== undefined ? row[key] !== value.$ne : value?.$in ? value.$in.map(String).includes(String(row[key])) : String(row[key])===String(value));
  const model=(rows,definition)=>Object.assign(function(data){return new (rows===trips ? require('../models/Trip') : require('../models/Recommendation'))(data)}, {
   collection:{listIndexes:()=>({toArray:async()=>indexesPresent?[definition]:[]})},
   schema:{path:()=>({enumValues:['OTHER'],defaultValue:'private'})},
   validate: data => (rows===trips ? require('../models/Trip') : require('../models/Recommendation')).validate(data),
-  findOne:async query=>{if(rows===trips && query.clientUploadId && deleteOnLookup){deleteOnLookup=false;markDeleted();}return rows.find(row=>matches(row,query));},
+  findOne:filter=>query(async()=>{if(rows===trips && filter.clientUploadId && deleteOnLookup){deleteOnLookup=false;markDeleted();}const result=clone(rows.find(row=>matches(row,filter)));if(rows===trips && filter.clientUploadId && lookupGate){const gate=lookupGate;lookupGate=null;gate.ready();await gate.wait;}return result;}),
   find:async query=>rows.filter(row=>matches(row,query)),
   exists:async query=>rows.some(row=>matches(row,query)),
   deleteMany:async query=>{let n=0;for(let i=rows.length-1;i>=0;i--)if(matches(rows[i],query)){rows.splice(i,1);n++;}return {deletedCount:n};},
   deleteOne:async query=>{const i=rows.findIndex(row=>matches(row,query));if(i<0)return {deletedCount:0};rows.splice(i,1);return {deletedCount:1};},
-  create:async data=>{
+  create:async input=>{
+   const data = Array.isArray(input) ? input[0] : input;
    if(rows===recs && failChild-- > 0) throw Error('Synthetic recommendation failure');
    if(data.clientUploadId && rows.some(row=>row.clientUploadId===data.clientUploadId && row.user===data.user && (rows===trips || row.associatedTrip===data.associatedTrip))) throw Object.assign(Error('duplicate'),{code:11000});
-   const row={...data,_id:(++sequence).toString(16).padStart(24,'0')};rows.push(row);return row;
+   const row={...data,_id:(++sequence).toString(16).padStart(24,'0')};rows.push(row);return Array.isArray(input) ? [clone(row)] : clone(row);
   },
-  updateOne:async(query,update)=>Object.assign(rows.find(row=>matches(row,query)),update.$set),
+  updateOne:async(filter,update)=>{const row=rows.find(row=>matches(row,filter));if(!row)return {matchedCount:0};Object.assign(row,update.$set);for(const [key,value] of Object.entries(update.$inc || {}))row[key]=(row[key]||0)+value;if(rows===trips && update.$set?.uploadComplete && deleteAtCompletion){deleteAtCompletion=false;markDeleted();}return {matchedCount:1};},
   findById:id=>({populate(){return this},lean:async()=>rows.find(row=>row._id===id)}),
  });
  const Trip=model(trips,uploadIndexes.trip),Recommendation=model(recs,uploadIndexes.recommendation);
+ const recordingUploads = createRecordingUploadService({ Trip, Recommendation, connection: { db:{admin:()=>({command:async()=>({setName:'fixture'})})},startSession:async()=>({withTransaction:async fn=>fn(),endSession:async()=>{}}) } });
  const guards=createTripWriteGuard({Trip,Recommendation,Deletion:{exists:async query=>receipts.some(row=>matches(row,query)),findOne:async query=>receipts.find(row=>matches(row,query))},isValidId:()=>true,deleteFile:async()=>{},addPendingFiles:async(id,user,ids)=>{const receipt=receipts.find(row=>String(row._id)===String(id)&&row.user===user);if(!receipt)throw Error('Missing receipt');receipt.pendingFiles.push(...ids);}});
- const recommendation=load('controllers/recommendationJsonController.js',{'../services/mobileTripWriteGuard':guards,'../models/Recommendation':Recommendation,'../models/User':{},'../models/Trip':Trip,'../services/storageService':{},sharp:{},'../services/fileOwnership':{assertOwnedPhotos:async()=>{}}});
- const controller=load('controllers/tripJsonController.js',{'../services/mobileTripWriteGuard':guards,'../models/Trip':Trip,'../models/Recommendation':Recommendation,'../models/User':{},'./recommendationJsonController':recommendation});
+ const recommendation=load('controllers/recommendationJsonController.js',{'../services/recordingUpload':recordingUploads,'../services/mobileTripWriteGuard':guards,'../models/Recommendation':Recommendation,'../models/User':{},'../models/Trip':Trip,'../services/storageService':{},sharp:{},'../services/fileOwnership':{assertOwnedPhotos:async()=>{}}});
+ const controller=load('controllers/tripJsonController.js',{'../services/recordingUpload':recordingUploads,'../services/mobileTripWriteGuard':guards,'../models/Trip':Trip,'../models/Recommendation':Recommendation,'../models/User':{},'./recommendationJsonController':recommendation});
  const run=async(body=payload(),user=owner,reliable=true)=>{let status,result,failure;const res={status(value){status=value;return this},json(value){result=value}};await (reliable?controller.createRecordingUpload:controller.createTripJson)({user:{_id:user},body},res,error=>{failure=error});if(failure)throw failure;return{status,result};};
- return{run,trips,recs,receipts,markDeleted,deleteDuringLookup:()=>{deleteOnLookup=true},failChildren:n=>{failChild=n},removeIndexes:()=>{indexesPresent=false}};
+ return{run,trips,recs,receipts,markDeleted,deleteAtCompletion:()=>{deleteAtCompletion=true},pauseLookup:()=>{let ready,resume;const started=new Promise(r=>ready=r),wait=new Promise(r=>resume=r);lookupGate={ready,wait};return{started,resume};},deleteDuringLookup:()=>{deleteOnLookup=true},failChildren:n=>{failChild=n},removeIndexes:()=>{indexesPresent=false}};
 }
 test('actual controllers: simultaneous same-owner uploads create one trip and child',async()=>{
  const f=fixture();const results=await Promise.all([f.run(),f.run()]);assert.equal(f.trips.length,1);assert.equal(f.recs.length,1);assert.equal(results[0].result.trip._id,results[1].result.trip._id);assert.ok(results.every(r=>r.result.uploadComplete));
@@ -72,4 +77,24 @@ test('recording tombstone returns explicit 410 without creating records',async()
 test('recording deletion between precheck and identity lookup compensates exact recreated records',async()=>{
  const f=fixture();const first=await f.run();f.deleteDuringLookup();const result=await f.run();
  assert.equal(result.status,410);assert.equal(result.result.tripId,first.result.trip._id);assert.equal(f.trips.length,0);assert.equal(f.recs.length,0);assert.equal(f.receipts.length,1);
+});
+
+test('overlapping stale incomplete snapshot cannot recreate deleted child or overwrite completion receipt', async () => {
+ const f=fixture(); f.failChildren(1); assert.equal((await f.run()).result.uploadComplete,false);
+ const gate=f.pauseLookup(); const stale=f.run(); await gate.started;
+ const completed=await f.run(); const canonical=JSON.stringify(completed.result.recommendationsOutcome);
+ f.recs.splice(0); gate.resume(); const resumed=await stale;
+ assert.equal(f.recs.length,0); assert.equal(resumed.result.uploadComplete,true);
+ assert.equal(JSON.stringify(resumed.result.recommendationsOutcome),canonical);
+ assert.equal(JSON.stringify(f.trips[0].uploadReceipt),canonical);
+});
+test('standalone database is rejected before a reliable upload can write', async () => {
+ const service=createRecordingUploadService({connection:{db:{admin:()=>({command:async()=>({isWritablePrimary:true})})}}});
+ await assert.rejects(service.assertSupported(),{statusCode:503});
+});
+
+test('permanent deletion between completion write and receipt read retains explicit tombstone response', async () => {
+ const f=fixture(); f.deleteAtCompletion(); const response=await f.run();
+ assert.equal(response.status,410); assert.equal(response.result.code,'TRIP_DELETED');
+ assert.equal(f.trips.length,0); assert.equal(f.recs.length,0);
 });

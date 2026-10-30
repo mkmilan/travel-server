@@ -10,10 +10,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function main(){
  assert(process.env.MONGOD_BINARY,'Set MONGOD_BINARY to an official MongoDB binary');
  const dir=await mkdtemp(path.join(os.tmpdir(),'recording-upload-mongo-')),port=await freePort();
- const mongo=spawn(process.env.MONGOD_BINARY,['--dbpath',dir,'--bind_ip','127.0.0.1','--port',String(port),'--nounixsocket','--wiredTigerCacheSizeGB','0.25'],{stdio:['ignore','pipe','pipe']});let logs='';mongo.stdout.on('data',b=>logs+=b);mongo.stderr.on('data',b=>logs+=b);
+ const mongo=spawn(process.env.MONGOD_BINARY,['--dbpath',dir,'--bind_ip','127.0.0.1','--port',String(port),'--nounixsocket','--replSet','recordingFixture','--wiredTigerCacheSizeGB','0.25'],{stdio:['ignore','pipe','pipe']});let logs='';mongo.stdout.on('data',b=>logs+=b);mongo.stderr.on('data',b=>logs+=b);
  try{
   for(let i=0;i<100&&!logs.includes('Waiting for connections');i++){if(mongo.exitCode!==null)throw Error(logs.slice(-1200));await sleep(100);}
-  await mongoose.connect(`mongodb://127.0.0.1:${port}/disposable_upload_fixture`,{autoIndex:false,serverSelectionTimeoutMS:5000});
+  const boot=new mongoose.mongo.MongoClient(`mongodb://127.0.0.1:${port}/?directConnection=true`);
+  try { await boot.connect(); await boot.db('admin').command({replSetInitiate:{_id:'recordingFixture',members:[{_id:0,host:`127.0.0.1:${port}`}]}});
+   let ready=false;for(let i=0;i<150;i++){if((await boot.db('admin').command({hello:1})).isWritablePrimary){ready=true;break;}await sleep(100);}assert(ready);
+  } finally { await boot.close(); }
+  await mongoose.connect(`mongodb://127.0.0.1:${port}/disposable_upload_fixture?replicaSet=recordingFixture`,{autoIndex:false,serverSelectionTimeoutMS:5000});
   const Trip=require('../models/Trip'),Recommendation=require('../models/Recommendation'),User=require('../models/User');
   await Promise.all([Trip.createCollection(),Recommendation.createCollection(),User.createCollection()]);
   const {createRecordingUpload}=require('../controllers/tripJsonController');
@@ -26,7 +30,7 @@ async function main(){
   await run();assert.equal(await Trip.countDocuments(),1);assert.equal(await Recommendation.countDocuments(),1);
   await run(make(),other);assert.equal(await Trip.countDocuments(),2);assert.equal(await Recommendation.countDocuments(),2);
   await assert.rejects(run({...make(),title:'Changed'}),{statusCode:409});
-  const partial=make('partial-trip');partial.recommendations.push({...partial.recommendations[0],uploadId:'2'});const original=Recommendation.create;let fail=true;Recommendation.create=async function(data){if(data.clientUploadId==='2'&&fail){fail=false;throw Error('Synthetic transient failure');}return original.call(this,data);};
+  const partial=make('partial-trip');partial.recommendations.push({...partial.recommendations[0],uploadId:'2'});const original=Recommendation.create;let fail=true;Recommendation.create=async function(data,...args){if((Array.isArray(data)?data[0]:data).clientUploadId==='2'&&fail){fail=false;throw Error('Synthetic transient failure');}return original.call(this,data,...args);};
   try{const first=await run(partial);assert.equal(first.result.uploadComplete,false);assert.equal(await Recommendation.countDocuments({associatedTrip:first.result.trip._id}),1);const retry=await run(partial);assert.equal(retry.result.uploadComplete,true);assert.equal(await Recommendation.countDocuments({associatedTrip:first.result.trip._id}),2);}finally{Recommendation.create=original;}
   const invalid=make('invalid-trip');invalid.recommendations[0].attributeTags=['INVALID'];const rejected=await run(invalid);assert.equal(rejected.status,400);assert.equal(rejected.result.uploadRejected,true);assert.equal(await Trip.countDocuments({clientUploadId:'invalid-trip'}),0);
   console.log('PASS real Mongo: missing-index fail-closed, 12 concurrent uploads, response-loss replay, owner isolation, changed-key conflict, partial-child retry, deterministic rejection.');
