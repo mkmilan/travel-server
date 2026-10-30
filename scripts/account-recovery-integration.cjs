@@ -27,7 +27,7 @@ async function main() {
   const mailPath=require.resolve('../utils/sendEmail');
   require.cache[mailPath]={id:mailPath,filename:mailPath,loaded:true,exports:async message=>{deliveries.push(message);if(smtpFails)throw Error('Synthetic ambiguous SMTP failure');}};
   const User=require('../models/User'); await User.init();
-  const express=require('express'); const app=express(); app.use(express.json()); app.use('/auth',require('../routes/authRoutes'));
+  const express=require('express'); const app=express(); app.use(express.json()); app.use(require('cookie-parser')()); app.use('/users',require('../routes/userRoutes')); app.use('/auth',require('../routes/authRoutes'));
   const {protectOptional}=require('../middleware/authMiddleware');
   app.get('/optional',protectOptional,(req,res)=>res.json({id:req.user?String(req.user._id):null}));
   app.use((err,req,res,next)=>res.status(res.statusCode>=400?res.statusCode:500).json({message:err.message}));
@@ -73,6 +73,10 @@ async function main() {
   const login=await call('/auth/login','POST',{email,password:'new-fixture-password'});assert.equal(login.status,200);assert(jwt.decode(login.body.token).sessionVersion);
   assert.equal((await call('/auth/me','GET',null,login.body.token)).status,200);
   assert.equal((await call('/optional','GET',null,login.body.token)).body.id,String(user._id));
+  const profileResponse=await fetch(base+'/users/me',{method:'PUT',headers:{'Content-Type':'application/json',Cookie:`token=${login.body.token}`},body:JSON.stringify({bio:'Synthetic profile update'})});
+  assert.equal(profileResponse.status,200); const profile=await profileResponse.json();
+  assert.equal(profile.token,login.body.token); assert.equal(profile.sessionVersion,undefined);
+  assert.equal((await call('/auth/me','GET',null,profile.token)).status,200);
   user=await User.findById(user._id).select('+password +sessionVersion +passwordResetToken');assert(await user.matchPassword('new-fixture-password'));assert.equal(user.passwordResetToken,undefined);
   console.log('PASS: SMTP-failure recovery, retained delivery token, credential gate, atomic resend cooldown, legacy sessions, single-use verification, concurrent reset/replay, password hashing and required/optional session revocation');
  } finally {

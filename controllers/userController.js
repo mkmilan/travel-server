@@ -5,7 +5,6 @@ const Follow = require("../models/Follow");
 const Recommendation = require("../models/Recommendation");
 const mongoose = require("mongoose");
 const storageService = require("../services/storageService");
-const generateToken = require("../utils/generateToken");
 const sharp = require("sharp");
 const path = require("path");
 const { profileVisibility } = require("../services/profileVisibility");
@@ -316,7 +315,8 @@ const updateUserProfile = async (req, res, next) => {
 			profilePictureUrl: updatedUser.profilePictureUrl,
 			following: updatedUser.following,
 			followers: updatedUser.followers,
-			token: req.headers.authorization?.split(" ")[1] || generateToken(updatedUser._id),
+			// Return the same credential protect validated (cookie takes precedence).
+			token: req.cookies?.token || req.headers.authorization?.split(" ")[1],
 			createdAt: updatedUser.createdAt,
 			updatedAt: updatedUser.updatedAt,
 		});
